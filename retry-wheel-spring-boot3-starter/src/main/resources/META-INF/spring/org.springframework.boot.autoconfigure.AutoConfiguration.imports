@@ -1,0 +1,3 @@
+com.fastretry.config.RetryWheelAutoConfiguration
+com.fastretry.config.RetryWheelMybatisAutoConfiguration
+com.fastretry.config.RetryWheelMetricsAutoConfiguration
