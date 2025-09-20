@@ -83,10 +83,9 @@ public interface RetryTaskMapper extends BaseMapper<RetryTaskEntity> {
            SET lease_expire_at = DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL #{ttls} SECOND),
                updated_at = CURRENT_TIMESTAMP(3)
          WHERE id = #{id} AND state = 1 AND owner_node_id = #{nodeId}
-           AND lease_expire_at <= DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL #{renewAhead} SECOND)
       """)
     int renewLease(@Param("id") Long id, @Param("nodeId") String nodeId,
-                   @Param("ttls") long ttls, @Param("renewAhead") long renewAhead);
+                   @Param("ttls") long ttls);
 
     /**
      * 本地重试写回

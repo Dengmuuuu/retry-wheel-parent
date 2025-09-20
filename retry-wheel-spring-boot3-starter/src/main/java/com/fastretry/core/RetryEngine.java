@@ -99,7 +99,7 @@ public class RetryEngine implements SmartLifecycle {
         this.scanExecutor = Executors.newFixedThreadPool(props.getStick().isEnable() ? 2 : 1,
                 new NamedThreadFactory("retry-scan-exec"));
         this.nodeId = applicationContext.getEnvironment()
-                .getProperty("spring.application.name", UUID.randomUUID().toString());
+                .getProperty("spring.application.name") + "-" + UUID.randomUUID();
     }
 
     @Override
@@ -243,12 +243,13 @@ public class RetryEngine implements SmartLifecycle {
                         && LocalDateTime.now().plusSeconds(task.getExecuteTimeoutMs().longValue())
                             .isAfter(task.getLeaseExpireAt().minusSeconds(props.getStick().getRenewAhead().toSeconds()))) {
                     // 为防止时钟漂移, 最终以数据库时钟为准
-                    mapper.renewLease(task.getId(), nodeId, props.getStick().getLeaseTtl().toSeconds(), props.getStick().getRenewAhead().toSeconds());
+                    mapper.renewLease(task.getId(), nodeId, props.getStick().getLeaseTtl().toSeconds());
+                    // 本地推算一下到期时间, 毫秒级误差, 节省一次db查询
+                    task.setLeaseExpireAt(LocalDateTime.now().plusSeconds(props.getStick().getLeaseTtl().toSeconds()));
                 }
 
                 // 执行 with 超时
                 Future<Boolean> f = handlerExecutor.submit(() -> executeWith(h, task, context));
-
                 boolean ret = false;
                 try {
                     ret = f.get(task.getExecuteTimeoutMs(), TimeUnit.MILLISECONDS);
@@ -313,7 +314,9 @@ public class RetryEngine implements SmartLifecycle {
         Instant nextTs = backoff.resolve(task.getBackoffStrategy())
                 .next(now, nextAttempt, deadline, task, props);
         // 下次执行时间间隔
-        long delay = nextTs.toEpochMilli() - now.toEpochMilli();
+        long execDelay = nextTs.toEpochMilli() - now.toEpochMilli();
+        // 到期时间间隔
+        long expiredDelay = Duration.between(LocalDateTime.now(), task.getLeaseExpireAt()).toMillis();
 
         // 设置下次触发时间, 非粘滞模式
         if (!props.getStick().isEnable()) {
@@ -321,10 +324,15 @@ public class RetryEngine implements SmartLifecycle {
                     task.getId(), task.getVersion(), LocalDateTime.ofInstant(nextTs, ZoneOffset.ofHours(8)), nextAttempt, err);
         } else {
             // 粘滞模式 RUNNING 内循环, 不回PENDING 不换owner
-            if (delay > (props.getStick().getLeaseTtl().toMillis() - props.getStick().getRenewAhead().toMillis())) {
-                // 可能需要续约, 下次执行时间点在续约窗口内
-                mapper.renewLease(task.getId(), nodeId, props.getStick().getLeaseTtl().toSeconds(), props.getStick().getRenewAhead().toSeconds());
-                task.setLeaseExpireAt(task.getLeaseExpireAt().plusSeconds(props.getStick().getLeaseTtl().toSeconds()));
+            if (execDelay > expiredDelay) {
+                // 下次执行时间超过了当前租约到期时间, 续约到下次执行时间后
+                long ttl = Duration.ofMillis(execDelay).plus(props.getStick().getRenewAhead()).toSeconds();
+                mapper.renewLease(task.getId(), nodeId, ttl);
+                // 本地推算一下到期时间, 毫秒级误差, 节省一次db查询
+                task.setLeaseExpireAt(LocalDateTime.ofInstant(
+                        nextTs.plusSeconds(props.getStick().getRenewAhead().toSeconds()),
+                        ZoneOffset.ofHours(8)));
+                log.info("execDelay={}, expireTime={}", execDelay, task.getLeaseExpireAt());
             }
             // 本地重试写回部分任务信息
             int st = mapper.updateForLocalRetry(task.getId(), nodeId, task.getVersion(),
@@ -336,7 +344,7 @@ public class RetryEngine implements SmartLifecycle {
                 task.setVersion(task.getVersion() + 1);
             }
             // 将重试任务粘滞到本地时间轮
-            timer.newTimeout(t -> dispatch(task), delay, TimeUnit.MILLISECONDS);
+            timer.newTimeout(t -> dispatch(task), execDelay, TimeUnit.MILLISECONDS);
         }
     }
 
