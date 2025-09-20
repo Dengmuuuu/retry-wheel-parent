@@ -15,6 +15,7 @@ import com.fastretry.model.enums.TaskState;
 import io.micrometer.core.instrument.util.NamedThreadFactory;
 import io.netty.util.HashedWheelTimer;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -64,7 +65,7 @@ public class RetryEngine implements SmartLifecycle {
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     /** 节点id */
-    private final String nodeId = UUID.randomUUID().toString();
+    private final String nodeId;
 
     /** 编程式事务 */
     private TransactionTemplate tt;
@@ -82,6 +83,7 @@ public class RetryEngine implements SmartLifecycle {
                        FailureDecider failureDecider,
                        RetryMetrics meter,
                        TransactionTemplate tt,
+                       ApplicationContext applicationContext,
                        RetryWheelProperties props) {
         this.timer = timer;
         this.dispatchExecutor = dispatchExecutor;
@@ -96,6 +98,8 @@ public class RetryEngine implements SmartLifecycle {
         this.props = props;
         this.scanExecutor = Executors.newFixedThreadPool(props.getStick().isEnable() ? 2 : 1,
                 new NamedThreadFactory("retry-scan-exec"));
+        this.nodeId = applicationContext.getEnvironment()
+                .getProperty("spring.application.name", UUID.randomUUID().toString());
     }
 
     @Override
@@ -285,12 +289,13 @@ public class RetryEngine implements SmartLifecycle {
      * 失败处理
      */
     private void handleFailure(RetryTaskEntity task, Throwable ex, RetryTaskContext ctx) {
-        log.info("[HandlerFailure] task execute failed, id={}, err={}, stickMode={}",
-                task.getId(), ex.getMessage(), props.getStick().isEnable());
         meter.incFailed();
 
         boolean retryable = failureDecider.isRetryable(ex, ctx);
         int nextAttempt = task.getRetryCount() + 1;
+        log.info("[HandlerFailure] task execute failed, id={}, attempt={}, err={}, stickMode={}",
+                task.getId(), nextAttempt, ex.getMessage(), props.getStick().isEnable());
+
         // 截断4000字符
         String err = "null";
         if (!StringUtils.isBlank(ex.getMessage())) {
@@ -319,6 +324,7 @@ public class RetryEngine implements SmartLifecycle {
             if (delay > (props.getStick().getLeaseTtl().toMillis() - props.getStick().getRenewAhead().toMillis())) {
                 // 可能需要续约, 下次执行时间点在续约窗口内
                 mapper.renewLease(task.getId(), nodeId, props.getStick().getLeaseTtl().toSeconds(), props.getStick().getRenewAhead().toSeconds());
+                task.setLeaseExpireAt(task.getLeaseExpireAt().plusSeconds(props.getStick().getLeaseTtl().toSeconds()));
             }
             // 本地重试写回部分任务信息
             int st = mapper.updateForLocalRetry(task.getId(), nodeId, task.getVersion(),
