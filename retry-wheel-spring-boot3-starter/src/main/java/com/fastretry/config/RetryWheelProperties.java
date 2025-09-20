@@ -2,6 +2,8 @@ package com.fastretry.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
@@ -19,6 +21,7 @@ import java.util.concurrent.ThreadPoolExecutor;
  *     ticks-per-wheel: 512
  *     max-pending-timeouts: 100000
  *   scan:
+ *     stickMode: false
  *     initial-delay: 200
  *     period: 200
  *     batch: 200
@@ -45,11 +48,20 @@ import java.util.concurrent.ThreadPoolExecutor;
  *       index: 0
  *   leader:
  *     enabled: false
+ *   tx:
+ *     propagation: Propagation.REQUIRED
+ *     read-only: false
+ *     isolation: Isolation.DEFAULT
+ *     timeout-seconds: 10
  */
 @Validated
 @ConfigurationProperties(prefix = "retry")
 @Configuration
 public class RetryWheelProperties {
+
+    private Stick stick = new Stick();
+
+    private Tx tx = new Tx();
 
     private Wheel wheel = new Wheel();
 
@@ -72,6 +84,98 @@ public class RetryWheelProperties {
     private Duration defaultExecuteTimeout = Duration.ofSeconds(10);
 
     // ----------------- 嵌套配置对象 -----------------
+
+    public static class Stick {
+        /** 是否启用粘滞抢占 */
+        private boolean enable = false;
+
+        /** 租约时长 默认30s */
+        private Duration leaseTtl = Duration.ofSeconds(30);
+
+        /** 提前续约窗口 默认10s （～ ttl / 3） */
+        private Duration renewAhead = Duration.ofSeconds(10);
+
+        /** 安排下一次重试时 是否续约 */
+        private boolean renewOnSchedule = true;
+
+        public boolean isEnable() {
+            return enable;
+        }
+
+        public void setEnable(boolean enable) {
+            this.enable = enable;
+        }
+
+        public Duration getLeaseTtl() {
+            return leaseTtl;
+        }
+
+        public void setLeaseTtl(Duration leaseTtl) {
+            this.leaseTtl = leaseTtl;
+        }
+
+        public Duration getRenewAhead() {
+            return renewAhead;
+        }
+
+        public void setRenewAhead(Duration renewAhead) {
+            this.renewAhead = renewAhead;
+        }
+
+        public boolean isRenewOnSchedule() {
+            return renewOnSchedule;
+        }
+
+        public void setRenewOnSchedule(boolean renewOnSchedule) {
+            this.renewOnSchedule = renewOnSchedule;
+        }
+    }
+
+    public static class Tx {
+        /** 默认传播行为 */
+        private Propagation propagation = Propagation.REQUIRED;
+
+        /** 只读事务（默认 false） */
+        private boolean readOnly = false;
+
+        /** 事务隔离级别（默认 DEFAULT） */
+        private Isolation isolation = Isolation.DEFAULT;
+
+        /** 超时（秒，<=0 表示不设置） */
+        private int timeoutSeconds = 0;
+
+        public Propagation getPropagation() {
+            return propagation;
+        }
+
+        public void setPropagation(Propagation propagation) {
+            this.propagation = propagation;
+        }
+
+        public boolean isReadOnly() {
+            return readOnly;
+        }
+
+        public void setReadOnly(boolean readOnly) {
+            this.readOnly = readOnly;
+        }
+
+        public Isolation getIsolation() {
+            return isolation;
+        }
+
+        public void setIsolation(Isolation isolation) {
+            this.isolation = isolation;
+        }
+
+        public int getTimeoutSeconds() {
+            return timeoutSeconds;
+        }
+
+        public void setTimeoutSeconds(int timeoutSeconds) {
+            this.timeoutSeconds = timeoutSeconds;
+        }
+    }
 
     public static class Wheel {
         /** 时间轮刻度（Duration 友好写法：100ms、1s） */
@@ -233,6 +337,12 @@ public class RetryWheelProperties {
     }
 
     // ----------------- getters/setters 顶层 -----------------
+
+    public Stick getStick() { return stick; }
+    public void setStick(Stick stick) { this.stick = stick; }
+
+    public Tx getTx() { return tx; }
+    public void setTx(Tx tx) { this.tx = tx; }
 
     public Wheel getWheel() { return wheel; }
     public void setWheel(Wheel wheel) { this.wheel = wheel; }

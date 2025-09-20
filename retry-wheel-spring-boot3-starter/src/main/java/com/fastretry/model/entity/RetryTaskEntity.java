@@ -3,7 +3,6 @@ package com.fastretry.model.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.baomidou.mybatisplus.annotation.Version;
 import lombok.Data;
 
 import java.time.LocalDateTime;
@@ -66,19 +65,23 @@ public class RetryTaskEntity {
     /** 最后一次错误信息（可截断） */
     private String lastError;
 
-    @Version
     /** 乐观锁 */
     private Integer version;
 
-    /** 业务类型 */
+    /** 当前持有者实力Id */
+    private String OwnerNodeId;
+
+    /** 租约到期时间 */
+    private LocalDateTime leaseExpireAt;
+
+    /** 栅栏版本 */
+    private Long fenceToken;
+
     private LocalDateTime createdAt;
 
-    /** 业务类型 */
     private LocalDateTime updatedAt;
 
-    /** 业务类型 */
     private String createdBy;
 
-    /** 业务类型 */
     private String updatedBy;
 }

@@ -26,22 +26,121 @@ public interface RetryTaskMapper extends BaseMapper<RetryTaskEntity> {
     List<Long> lockDueTaskIds(@Param("limit") int limit);
 
     /**
-     * 批量置 RUNNING （乐观锁可在后续updateById时校验version）
+     * 批量置 RUNNING
      */
     @Update({
             "<script>",
             "UPDATE retry_task",
-            "   SET state = 1,",  // RUNNING
+            "   SET state = 1,",
             "       updated_at = CURRENT_TIMESTAMP(3),",
             "       version = version + 1",
-            " WHERE state = 0",    // PENDING
-            "   AND id IN",
-            "   <foreach collection='ids' item='id' open='(' separator=',' close=')'>",
-            "     #{id}",
-            "   </foreach>",
+            " WHERE state = 0",
+            "   <if test='ids != null and ids.size() > 0'>",
+            "     AND id IN",
+            "     <foreach collection='ids' item='id' open='(' separator=',' close=')'>",
+            "       #{id}",
+            "     </foreach>",
+            "   </if>",
+            "   <if test='ids == null or ids.size() == 0'>",
+            "     AND 1 = 0",
+            "   </if>",
             "</script>"
     })
     int markRunningBatch(@Param("ids") List<Long> ids, @Param("nodeId") String nodeId);
+
+    /**
+     * 批量置 RUNNING
+     * 粘滞绑定
+     */
+    @Update({
+            "<script>",
+            "UPDATE retry_task",
+            "   SET state = 1,",
+            "       owner_node_id = #{nodeId},",
+            "       lease_expire_at = TIMESTAMPADD(MICROSECOND, #{ttlMs} * 1000, CURRENT_TIMESTAMP(3)),",
+            "       fence_token = fence_token + 1,",
+            "       updated_at = CURRENT_TIMESTAMP(3),",
+            "       version = version + 1",
+            " WHERE state = 0",
+            "   <if test='ids != null and ids.size() > 0'>",
+            "     AND id IN",
+            "     <foreach collection='ids' item='id' open='(' separator=',' close=')'>",
+            "       #{id}",
+            "     </foreach>",
+            "   </if>",
+            "   <if test='ids == null or ids.size() == 0'>",
+            "     AND 1 = 0",
+            "   </if>",
+            "</script>"
+    })
+    int markRunningAndOwnBatch(@Param("ids") List<Long> ids, @Param("nodeId") String nodeId, @Param("ttlMs") long ttlMs);
+
+    /**
+     * 提前续约
+     */
+    @Update("""
+        UPDATE retry_task
+           SET lease_expire_at = DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL #{ttls} SECOND),
+               updated_at = CURRENT_TIMESTAMP(3)
+         WHERE id = #{id} AND state = 1 AND owner_node_id = #{nodeId}
+           AND lease_expire_at <= DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL #{renewAhead} SECOND)
+      """)
+    int renewLease(@Param("id") Long id, @Param("nodeId") String nodeId,
+                   @Param("ttls") long ttls, @Param("renewAhead") long renewAhead);
+
+    /**
+     * 本地重试写回
+     */
+    @Update("""
+        UPDATE retry_task
+           SET retry_count = #{retryCount},
+               next_trigger_time = #{nextTriggerTime},
+               last_error = #{lastError},
+               updated_at = CURRENT_TIMESTAMP(3), version = version + 1
+         WHERE id = #{id} AND state=1 AND owner_node_id = #{nodeId} AND version = #{version}
+    """)
+    int updateForLocalRetry(@Param("id") Long id, @Param("nodeId") String nodeId,
+                            @Param("version") int version,
+                            @Param("nextTriggerTime") LocalDateTime nextTriggerTime,
+                            @Param("retryCount") int retryCount,
+                            @Param("lastError") String lastError);
+
+    /**
+     * 接管查询
+     */
+    @Select("""
+        SELECT id AS fence
+          FROM retry_task
+         WHERE state = 1 AND lease_expire_at<=CURRENT_TIMESTAMP(3)
+         ORDER BY updated_at ASC
+         LIMIT #{limit}
+         FOR UPDATE SKIP LOCKED
+      """)
+    List<Long> findLeaseExpired(@Param("limit") int limit);
+
+    /**
+     * 尝试接管
+     */
+    @Update({
+            "<script>",
+            "UPDATE retry_task",
+            "   SET owner_node_id = #{nodeId},",
+            "       lease_expire_at = DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL #{ttls} SECOND),",
+            "       fence_token = fence_token + 1,",
+            "       updated_at = CURRENT_TIMESTAMP(3)",
+            " WHERE state = 1",
+            "   <if test='ids != null and ids.size() > 0'>",
+            "     AND id IN",
+            "     <foreach collection='ids' item='x' open='(' separator=',' close=')'>",
+            "       #{x}",
+            "     </foreach>",
+            "   </if>",
+            "   <if test='ids == null or ids.size() == 0'>",
+            "     AND 1 = 0",
+            "   </if>",
+            "</script>"
+    })
+    int tryTakeover(@Param("ids") List<Long> id, @Param("nodeId") String nodeId, @Param("ttls") long ttls);
 
     /**
      * 标记成功：仅允许 RUNNING(1) -> SUCCEED(2)，乐观锁校验 version。

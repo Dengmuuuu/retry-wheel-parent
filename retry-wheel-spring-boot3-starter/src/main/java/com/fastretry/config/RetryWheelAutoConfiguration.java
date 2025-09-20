@@ -20,6 +20,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.Map;
@@ -97,9 +98,10 @@ public class RetryWheelAutoConfiguration {
                                    @Autowired BackoffRegistry backoffRegistry,
                                    @Autowired(required = false)  FailureDecider failureDecider,
                                    RetryMetrics meter,
+                                   TransactionTemplate tt,
                                    RetryWheelProperties props) {
         return new RetryEngine(timer, dispatchExecutor, handlerExecutor, mapper, serializer, handlers,
-                backoffRegistry, failureDecider, meter, props);
+                backoffRegistry, failureDecider, meter, tt, props);
     }
 
     /**
