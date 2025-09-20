@@ -134,10 +134,10 @@ return Map.of("taskId", taskId);
 
 ### 粘滞租约
 
-✅ 表结构新增：owner_node_id、lease_expire_at、fence_token；索引 idx_retry_task_lease。  
-✅ 首次抢占：PENDING→RUNNING 同步设置 owner/lease/fence 并挂入本地时间轮。  
-✅ 本地重试：保持 RUNNING 与 owner 不变，仅回写 retry_count/next_trigger_time/last_error。 
-✅ 接管：lease_expire_at<=now() 条件抢占，其他节点安全接手。 
+✅ 表结构新增：owner_node_id、lease_expire_at、fence_token；索引 idx_retry_task_lease.    
+✅ 首次抢占：PENDING→RUNNING 同步设置 owner/lease/fence 并挂入本地时间轮.    
+✅ 本地重试：保持 RUNNING 与 owner 不变，仅回写 retry_count/next_trigger_time/last_error.   
+✅ 接管：lease_expire_at<=now() 条件抢占，其他节点安全接手.   
 
 ### 可观测性与运维
 
@@ -152,4 +152,4 @@ return Map.of("taskId", taskId);
 
 ### 多租户/分片
 
-⬜️ 多租户/分片策略 SPI：tenant_id/shard_key 参与扫描与限流；提供路由器扩展点。
+⬜️ 多租户/分片策略 SPI：tenant_id/shard_key 参与扫描与限流；提供路由器扩展点.  
