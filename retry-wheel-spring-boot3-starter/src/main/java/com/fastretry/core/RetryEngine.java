@@ -332,7 +332,6 @@ public class RetryEngine implements SmartLifecycle {
                 task.setLeaseExpireAt(LocalDateTime.ofInstant(
                         nextTs.plusSeconds(props.getStick().getRenewAhead().toSeconds()),
                         ZoneOffset.ofHours(8)));
-                log.info("execDelay={}, expireTime={}", execDelay, task.getLeaseExpireAt());
             }
             // 本地重试写回部分任务信息
             int st = mapper.updateForLocalRetry(task.getId(), nodeId, task.getVersion(),
