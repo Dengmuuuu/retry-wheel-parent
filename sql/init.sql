@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS retry_task (
     KEY idx_state_time_pri (state, next_trigger_time, priority),
     KEY idx_tenant_state_time (tenant_id, state, next_trigger_time),
     KEY idx_shard_priority_time ((CRC32(shard_key)), priority, next_trigger_time),
-    KEY idx_retry_task_lease ON retry_task (lease_expire_at, state) -- 按租约过期找可接管任务
+    KEY idx_retry_task_lease (lease_expire_at, state) -- 按租约过期找可接管任务
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='通用重试任务';
 
 -- 审计/事件表（可选，用于运维追踪）
