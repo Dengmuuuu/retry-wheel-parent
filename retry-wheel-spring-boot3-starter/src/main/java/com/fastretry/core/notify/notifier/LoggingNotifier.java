@@ -21,11 +21,11 @@ public class LoggingNotifier implements Notifier {
     @Override
     public void notify(NotifyContext ctx, Severity severity) {
         switch (severity) {
-            case CRITICAL, ERROR -> log.error("[Notify][{}] biz={}, task={}, reason={}, err={}",
-                    ctx.getType(), ctx.getBizType(), ctx.getTaskId(), ctx.getReasonCode(), truncate(ctx.getLastError()));
-            case WARNING -> log.warn("[Notify][{}] biz={}, task={}, reason={}",
-                    ctx.getType(), ctx.getBizType(), ctx.getTaskId(), ctx.getReasonCode());
-            default -> log.info("[Notify][{}] biz={}, task={}", ctx.getType(), ctx.getBizType(), ctx.getTaskId());
+            case CRITICAL, ERROR -> log.error("[Notify-{}] biz={}, task={}, reason={}, err={}, attrs={}",
+                    ctx.getType(), ctx.getBizType(), ctx.getTaskId(), ctx.getReasonCode(), truncate(ctx.getLastError()), ctx.getAttributes());
+            case WARNING -> log.warn("[Notify-{}] biz={}, task={}, reason={}, attrs={}",
+                    ctx.getType(), ctx.getBizType(), ctx.getTaskId(), ctx.getReasonCode(), ctx.getAttributes());
+            default -> log.info("[Notify-{}] biz={}, task={}", ctx.getType(), ctx.getBizType(), ctx.getTaskId());
         }
     }
 
