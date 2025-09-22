@@ -5,6 +5,7 @@ import com.fastretry.core.RetryEngine;
 import com.fastretry.core.failure.DefaultFailureDecider;
 import com.fastretry.core.metric.RetryMetrics;
 import com.fastretry.core.notify.AsyncNotifyingService;
+import com.fastretry.core.notify.NotifyingFacade;
 import com.fastretry.core.serializer.JacksonPayloadSerializer;
 import com.fastretry.mapper.RetryTaskMapper;
 import com.fastretry.core.spi.BackoffPolicy;
@@ -101,7 +102,7 @@ public class RetryWheelAutoConfiguration {
                                    RetryMetrics meter,
                                    TransactionTemplate tt,
                                    RetryWheelProperties props,
-                                   AsyncNotifyingService notifyService,
+                                   NotifyingFacade notifyService,
                                    ApplicationContext applicationContext) {
         return new RetryEngine(timer, dispatchExecutor, handlerExecutor, mapper, serializer, handlers,
                 backoffRegistry, failureDecider, meter, tt, applicationContext, notifyService, props);

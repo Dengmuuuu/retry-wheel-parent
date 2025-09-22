@@ -3,12 +3,14 @@ package com.fastretry.autoconfig;
 import com.fastretry.config.RetryNotifierProperties;
 import com.fastretry.core.metric.RetryMetrics;
 import com.fastretry.core.notify.AsyncNotifyingService;
+import com.fastretry.core.notify.NotifyingFacade;
 import com.fastretry.core.notify.notifier.LoggingNotifier;
 import com.fastretry.core.notify.ratelimit.RateLimitFilter;
 import com.fastretry.core.notify.route.SimpleRouter;
 import com.fastretry.core.spi.notify.Notifier;
 import com.fastretry.core.spi.notify.NotifierRouter;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -37,7 +39,7 @@ public class RetryNotifierAutoConfiguration {
     }
 
     @Bean
-    @ConditionalOnProperty(prefix = "retry.notify", name = "enabled", matchIfMissing = true)
+    @ConditionalOnProperty(prefix = "retry.notify", name = "enabled")
     public AsyncNotifyingService asyncNotifyingService(NotifierRouter router,
                                                        RetryMetrics metrics,
                                                        RetryNotifierProperties props) {
@@ -56,5 +58,10 @@ public class RetryNotifierAutoConfiguration {
                 new ThreadPoolExecutor.CallerRunsPolicy());
         RateLimitFilter filter = new RateLimitFilter(props.getRateLimit().getWindow(), props.getRateLimit().getThreshold());
         return new AsyncNotifyingService(exec, router, filter, metrics);
+    }
+
+    @Bean
+    public NotifyingFacade notifyingFacade(ObjectProvider<AsyncNotifyingService> provider) {
+        return new NotifyingFacade(provider);
     }
 }

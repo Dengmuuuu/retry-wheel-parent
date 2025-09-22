@@ -6,6 +6,7 @@ import com.fastretry.core.backoff.BackoffRegistry;
 import com.fastretry.core.metric.RetryMetrics;
 import com.fastretry.core.notify.AsyncNotifyingService;
 import com.fastretry.core.notify.NotifyContexts;
+import com.fastretry.core.notify.NotifyingFacade;
 import com.fastretry.core.spi.FailureDecider;
 import com.fastretry.core.spi.PayloadSerializer;
 import com.fastretry.core.spi.RetryTaskHandler;
@@ -80,7 +81,7 @@ public class RetryEngine implements SmartLifecycle {
     private final RetryWheelProperties props;
 
     /** 通知模块 */
-    private final AsyncNotifyingService notifyService;
+    private final NotifyingFacade notifyService;
 
     public RetryEngine(HashedWheelTimer timer,
                        ExecutorService dispatchExecutor,
@@ -93,7 +94,7 @@ public class RetryEngine implements SmartLifecycle {
                        RetryMetrics meter,
                        TransactionTemplate tt,
                        ApplicationContext applicationContext,
-                       AsyncNotifyingService notifyService,
+                       NotifyingFacade notifyService,
                        RetryWheelProperties props) {
         this.timer = timer;
         this.dispatchExecutor = dispatchExecutor;
