@@ -1,4 +1,5 @@
-com.fastretry.config.RetryWheelAutoConfiguration
-com.fastretry.config.RetryWheelMybatisAutoConfiguration
-com.fastretry.config.RetryWheelMetricsAutoConfiguration
-com.fastretry.config.RetryTxAutoConfiguration
+com.fastretry.autoconfig.RetryWheelAutoConfiguration
+com.fastretry.autoconfig.RetryWheelMybatisAutoConfiguration
+com.fastretry.autoconfig.RetryWheelMetricsAutoConfiguration
+com.fastretry.autoconfig.RetryTxAutoConfiguration
+com.fastretry.autoconfig.RetryNotifierAutoConfiguration

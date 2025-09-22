@@ -1,4 +1,4 @@
-package com.fastretry.config;
+package com.fastretry.autoconfig;
 
 import com.baomidou.mybatisplus.extension.spring.MybatisSqlSessionFactoryBean;
 import org.apache.ibatis.session.SqlSessionFactory;

@@ -17,13 +17,13 @@ public interface RetryTaskMapper extends BaseMapper<RetryTaskEntity> {
      * 抢占到期任务（返回id列表，后续批量置RUNNING）
      */
     @Select("""
-        select id from retry_task
+        select * from retry_task
         where state = 0 and next_trigger_time <= CURRENT_TIMESTAMP(3)
         order by priority desc, next_trigger_time asc
         limit #{limit}
         for update skip locked
     """)
-    List<Long> lockDueTaskIds(@Param("limit") int limit);
+    List<RetryTaskEntity> lockDueTaskIds(@Param("limit") int limit);
 
     /**
      * 批量置 RUNNING
@@ -108,14 +108,13 @@ public interface RetryTaskMapper extends BaseMapper<RetryTaskEntity> {
      * 接管查询
      */
     @Select("""
-        SELECT id AS fence
-          FROM retry_task
+        SELECT * FROM retry_task
          WHERE state = 1 AND lease_expire_at<=CURRENT_TIMESTAMP(3)
-         ORDER BY updated_at ASC
+         ORDER BY updated_at
          LIMIT #{limit}
          FOR UPDATE SKIP LOCKED
       """)
-    List<Long> findLeaseExpired(@Param("limit") int limit);
+    List<RetryTaskEntity> findLeaseExpired(@Param("limit") int limit);
 
     /**
      * 尝试接管

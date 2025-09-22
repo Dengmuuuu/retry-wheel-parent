@@ -4,13 +4,18 @@ import com.baomidou.mybatisplus.core.toolkit.StringUtils;
 import com.fastretry.config.RetryWheelProperties;
 import com.fastretry.core.backoff.BackoffRegistry;
 import com.fastretry.core.metric.RetryMetrics;
+import com.fastretry.core.notify.AsyncNotifyingService;
+import com.fastretry.core.notify.NotifyContexts;
+import com.fastretry.core.notify.NotifyingFacade;
 import com.fastretry.core.spi.FailureDecider;
 import com.fastretry.core.spi.PayloadSerializer;
 import com.fastretry.core.spi.RetryTaskHandler;
 import com.fastretry.mapper.RetryTaskMapper;
 import com.fastretry.model.SubmitOptions;
+import com.fastretry.model.ctx.NotifyContext;
 import com.fastretry.model.ctx.RetryTaskContext;
 import com.fastretry.model.entity.RetryTaskEntity;
+import com.fastretry.model.enums.Severity;
 import com.fastretry.model.enums.TaskState;
 import io.micrometer.core.instrument.util.NamedThreadFactory;
 import io.netty.util.HashedWheelTimer;
@@ -29,6 +34,8 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Slf4j
 public class RetryEngine implements SmartLifecycle {
@@ -73,6 +80,9 @@ public class RetryEngine implements SmartLifecycle {
     /** 配置 */
     private final RetryWheelProperties props;
 
+    /** 通知模块 */
+    private final NotifyingFacade notifyService;
+
     public RetryEngine(HashedWheelTimer timer,
                        ExecutorService dispatchExecutor,
                        ExecutorService handlerExecutor,
@@ -84,6 +94,7 @@ public class RetryEngine implements SmartLifecycle {
                        RetryMetrics meter,
                        TransactionTemplate tt,
                        ApplicationContext applicationContext,
+                       NotifyingFacade notifyService,
                        RetryWheelProperties props) {
         this.timer = timer;
         this.dispatchExecutor = dispatchExecutor;
@@ -95,6 +106,7 @@ public class RetryEngine implements SmartLifecycle {
         this.failureDecider = failureDecider;
         this.meter = meter;
         this.tt = tt;
+        this.notifyService = notifyService;
         this.props = props;
         this.scanExecutor = Executors.newFixedThreadPool(props.getStick().isEnable() ? 2 : 1,
                 new NamedThreadFactory("retry-scan-exec"));
@@ -139,6 +151,7 @@ public class RetryEngine implements SmartLifecycle {
                 }
             } catch (Exception e) {
                 log.error("[ScheduleScanner]  scan task error", e);
+                notifyService.fire(NotifyContexts.ctxForEngineError(nodeId, "engine-core-scan", e), Severity.ERROR);
                 meter.incScanErr();
             } finally {
                 // 将下轮scan挂到时间轮
@@ -156,15 +169,30 @@ public class RetryEngine implements SmartLifecycle {
         List<RetryTaskEntity> tasks = tt.execute(status -> {
             int batch = props.getScan().getBatch();
             // 加行锁获取任务
-            List<Long> ids = mapper.lockDueTaskIds(batch);
+            List<RetryTaskEntity> lockTasks = mapper.lockDueTaskIds(batch);
+            Map<Long, RetryTaskEntity> lockTaskMap = lockTasks.stream()
+                    .collect(Collectors.toMap(RetryTaskEntity::getId, Function.identity()));
+            List<Long> ids = lockTaskMap.keySet().stream().collect(Collectors.toList());
             // 同一事务下加行锁后更新状态RUNNING
             List<RetryTaskEntity> ret = List.of();
             if (!ids.isEmpty()) {
                 if (props.getStick().isEnable()) {
                     // 启用粘滞模式
-                    mapper.markRunningAndOwnBatch(ids, nodeId, props.getStick().getLeaseTtl().toSeconds());
+                    try {
+                        mapper.markRunningAndOwnBatch(ids, nodeId, props.getStick().getLeaseTtl().toSeconds());
+                    } catch (Exception e) {
+                        lockTaskMap.values().forEach(task ->
+                                notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task, "markRunningAndOwnBatch", e), Severity.ERROR));
+                        throw e;
+                    }
                 } else {
-                    mapper.markRunningBatch(ids, nodeId);
+                    try {
+                        mapper.markRunningBatch(ids, nodeId);
+                    } catch (Exception e) {
+                        lockTaskMap.values().forEach(task ->
+                                notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task, "markRunningBatch", e), Severity.ERROR));
+                        throw e;
+                    }
                 }
                 ret = mapper.selectBatchIds(ids);
             }
@@ -182,15 +210,35 @@ public class RetryEngine implements SmartLifecycle {
     private void lockTakeOver() {
         List<RetryTaskEntity> tasks = tt.execute(status -> {
             int batch = props.getScan().getBatch();
-            List<Long> ids = mapper.findLeaseExpired(batch);
+            List<RetryTaskEntity> oldTasks = mapper.findLeaseExpired(batch);
 
-            List<RetryTaskEntity> ret = List.of();
-            if (!ids.isEmpty()) {
-                mapper.tryTakeover(ids, nodeId, props.getStick().getLeaseTtl().toSeconds());
-                log.info("[Takeover Scan] the current service has taken over the task ids={}", ids);
-                ret = mapper.selectBatchIds(ids);
+            List<RetryTaskEntity> newTasks = List.of();
+            if (!oldTasks.isEmpty()) {
+                Map<Long, RetryTaskEntity> oldTaskMap = oldTasks.stream()
+                        .collect(Collectors.toMap(RetryTaskEntity::getId, Function.identity()));
+                List<Long> ids = oldTaskMap.keySet().stream().toList();
+                try {
+                    mapper.tryTakeover(ids, nodeId, props.getStick().getLeaseTtl().toSeconds());
+                    log.info("[Takeover Scan] the current service has taken over the task ids={}", ids);
+                } catch (Exception e) {
+                    oldTaskMap.values().forEach(task ->
+                            notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task, "tryTakeover", e), Severity.ERROR));
+                    throw e;
+                }
+
+                newTasks = mapper.selectBatchIds(ids);
+
+                // 接管通知
+                newTasks.forEach(task -> {
+                    RetryTaskEntity oldTask = oldTaskMap.get(task.getId());
+                    notifyService.fire(NotifyContexts.ctxForTakeover(nodeId, task.getTaskId(), task.getBizType(),
+                            task.getTenantId(),
+                            oldTask.getOwnerNodeId(),
+                            oldTask.getFenceToken(),
+                            task.getFenceToken()), Severity.ERROR);
+                });
             }
-            return ret;
+            return newTasks;
         });
         // 提交到调度线程池
         if (tasks != null && !tasks.isEmpty()) {
@@ -207,12 +255,18 @@ public class RetryEngine implements SmartLifecycle {
                 // check过期/截止线, 标记进入死信队列
                 if (task.getDeadlineTime() != null
                         && LocalDateTime.now().isAfter(task.getDeadlineTime())) {
-                    mapper.markDeadLetter(task.getId(), task.getVersion(), "[Dispatch] Expired deadline");
-                    log.warn("[Dispatch] task expired status modify to deadLetter, id={}", task.getId());
+                    try {
+                        mapper.markDeadLetter(task.getId(), task.getVersion(), "[Dispatch] Expired deadline");
+                        log.warn("[Dispatch] task expired status modify to deadLetter, id={}", task.getId());
+                    } catch (Exception e) {
+                        notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task, "markDeadLetter", e), Severity.ERROR);
+                        throw e;
+                    }
+                    notifyService.fire(NotifyContexts.ctxForDlq(nodeId, task, null, "EXPIRED_DEADLINE"), Severity.ERROR);
                     return;
                 }
 
-                // 已被接管
+                // 当前节点时间轮中任务已被其他节点接管
                 if (StringUtils.isNotEmpty(task.getOwnerNodeId()) && !nodeId.equals(task.getOwnerNodeId())) {
                     log.warn("[Dispatch] task id={} has been taken over by another instance", task.getId());
                     return;
@@ -221,8 +275,14 @@ public class RetryEngine implements SmartLifecycle {
                 RetryTaskHandler<?> h = handlers.get(task.getBizType());
                 // 对应任务的执行器不存在, 标记进入死信队列
                 if (h == null) {
-                    mapper.markDeadLetter(task.getId(), task.getVersion(), "No handler");
-                    log.warn("[Dispatch] task no handler, status modify to deadLetter, id={}", task.getId());
+                    try {
+                        mapper.markDeadLetter(task.getId(), task.getVersion(), "No handler");
+                        log.warn("[Dispatch] task no handler, status modify to deadLetter, id={}", task.getId());
+                    } catch (Exception e) {
+                        notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task, "markDeadLetter", e), Severity.ERROR);
+                        throw e;
+                    }
+                    notifyService.fire(NotifyContexts.ctxForDlq(nodeId, task, null, "NO_HANDLER"), Severity.ERROR);
                     return;
                 }
 
@@ -242,8 +302,13 @@ public class RetryEngine implements SmartLifecycle {
                 if (props.getStick().isEnable() && task.getLeaseExpireAt() != null
                         && LocalDateTime.now().plusSeconds(task.getExecuteTimeoutMs().longValue())
                             .isAfter(task.getLeaseExpireAt().minusSeconds(props.getStick().getRenewAhead().toSeconds()))) {
-                    // 为防止时钟漂移, 最终以数据库时钟为准
-                    mapper.renewLease(task.getId(), nodeId, props.getStick().getLeaseTtl().toSeconds());
+                    try {
+                        // 为防止时钟漂移, 最终以数据库时钟为准
+                        mapper.renewLease(task.getId(), nodeId, props.getStick().getLeaseTtl().toSeconds());
+                    } catch (Exception e) {
+                        notifyService.fire(NotifyContexts.ctxForRenewFail(nodeId, task, e), Severity.WARNING);
+                        throw e;
+                    }
                     // 本地推算一下到期时间, 毫秒级误差, 节省一次db查询
                     task.setLeaseExpireAt(LocalDateTime.now().plusSeconds(props.getStick().getLeaseTtl().toSeconds()));
                 }
@@ -263,13 +328,18 @@ public class RetryEngine implements SmartLifecycle {
                 }
 
                 if (ret) {
-                    mapper.markSuccess(task.getId(), task.getVersion());
+                    try {
+                        mapper.markSuccess(task.getId(), task.getVersion());
+                    } catch (Exception e) {
+                        notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task, "markSuccess", e), Severity.ERROR);
+                        throw e;
+                    }
                     meter.incSuccess();
                 } else {
                     handleFailure(task, new RuntimeException("[Dispatch] Handler returned false"), context);
                 }
             } catch (Throwable ex) {
-                log.error("[Dispatch] fatal error, {}", ex.getMessage());
+                log.error("[Dispatch] error, {}", ex.getMessage());
                 throw ex;
             }
         });
@@ -294,8 +364,6 @@ public class RetryEngine implements SmartLifecycle {
 
         boolean retryable = failureDecider.isRetryable(ex, ctx);
         int nextAttempt = task.getRetryCount() + 1;
-        log.info("[HandlerFailure] task execute failed, id={}, attempt={}, err={}, stickMode={}",
-                task.getId(), nextAttempt, ex.getMessage(), props.getStick().isEnable());
 
         // 截断4000字符
         String err = "null";
@@ -304,13 +372,25 @@ public class RetryEngine implements SmartLifecycle {
         }
         // 不可重试或者达到最大重试次数, 将任务标记死信队列
         if (!retryable || nextAttempt > task.getMaxRetry()) {
-            log.warn("[HandlerFailure] when the maximum retry count is reached, mark the task as dead letter queue ");
-            mapper.markDeadLetter(task.getId(), task.getVersion(), err);
+            try {
+                mapper.markDeadLetter(task.getId(), task.getVersion(), err);
+            } catch (Exception e) {
+                notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task, "markDeadLetter", e), Severity.ERROR);
+                throw e;
+            }
             meter.incDlq();
+            if (!retryable) {
+                notifyService.fire(NotifyContexts.ctxForNonRetryable(nodeId, task, ex), Severity.WARNING);
+            } else {
+                notifyService.fire(NotifyContexts.ctxForMaxRetry(nodeId, task, ex), Severity.WARNING);
+            }
             return;
         }
 
-        Instant now = Instant.now(), deadline = task.getDeadlineTime() == null ? null : task.getDeadlineTime().toInstant(ZoneOffset.ofHours(8));
+        log.info("[Task-Retry] taskId={}, attempt={}", task.getTaskId(), nextAttempt);
+
+        Instant now = Instant.now(), deadline = task.getDeadlineTime() == null
+                ? null : task.getDeadlineTime().toInstant(ZoneOffset.ofHours(8));
         Instant nextTs = backoff.resolve(task.getBackoffStrategy())
                 .next(now, nextAttempt, deadline, task, props);
         // 下次执行时间间隔
@@ -320,23 +400,41 @@ public class RetryEngine implements SmartLifecycle {
 
         // 设置下次触发时间, 非粘滞模式
         if (!props.getStick().isEnable()) {
-            mapper.markPendingWithNext(
-                    task.getId(), task.getVersion(), LocalDateTime.ofInstant(nextTs, ZoneOffset.ofHours(8)), nextAttempt, err);
+            try {
+                mapper.markPendingWithNext(
+                        task.getId(), task.getVersion(), LocalDateTime.ofInstant(nextTs, ZoneOffset.ofHours(8)), nextAttempt, err);
+            } catch (Exception e) {
+                notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task, "markPendingWithNext", e), Severity.ERROR);
+                throw e;
+            }
         } else {
             // 粘滞模式 RUNNING 内循环, 不回PENDING 不换owner
             if (execDelay > expiredDelay) {
                 // 下次执行时间超过了当前租约到期时间, 续约到下次执行时间后
                 long ttl = Duration.ofMillis(execDelay).plus(props.getStick().getRenewAhead()).toSeconds();
-                mapper.renewLease(task.getId(), nodeId, ttl);
+                try {
+                    // 为防止时钟漂移, 最终以数据库时钟为准
+                    mapper.renewLease(task.getId(), nodeId, ttl);
+                } catch (Exception e) {
+                    notifyService.fire(NotifyContexts.ctxForRenewFail(nodeId, task, e), Severity.WARNING);
+                    throw e;
+                }
                 // 本地推算一下到期时间, 毫秒级误差, 节省一次db查询
                 task.setLeaseExpireAt(LocalDateTime.ofInstant(
                         nextTs.plusSeconds(props.getStick().getRenewAhead().toSeconds()),
                         ZoneOffset.ofHours(8)));
+                log.info("[handleFailure] task={} renewLease success, lease expired={}", task.getId(), task.getLeaseExpireAt());
             }
             // 本地重试写回部分任务信息
-            int st = mapper.updateForLocalRetry(task.getId(), nodeId, task.getVersion(),
-                    LocalDateTime.ofInstant(nextTs, ZoneOffset.ofHours(8)),
-                    nextAttempt, err);
+            int st = 0;
+            try {
+                st = mapper.updateForLocalRetry(task.getId(), nodeId, task.getVersion(),
+                        LocalDateTime.ofInstant(nextTs, ZoneOffset.ofHours(8)),
+                        nextAttempt, err);
+            } catch (Exception e) {
+                notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task, "updateForLocalRetry", e), Severity.ERROR);
+                throw e;
+            }
             if (st > 0) {
                 // 更新本地任务重试次数及版本
                 task.setRetryCount(nextAttempt);
@@ -375,7 +473,8 @@ public class RetryEngine implements SmartLifecycle {
         Instant first = now.plus(Optional.ofNullable(opt.getDelay()).orElse(Duration.ZERO));
         entity.setNextTriggerTime(LocalDateTime.ofInstant(first, ZoneOffset.ofHours(8)));
         entity.setDeadlineTime(opt.getDeadline()==null?null:LocalDateTime.ofInstant(opt.getDeadline(), ZoneOffset.ofHours(8)));
-        entity.setCreatedBy("api"); entity.setUpdatedBy("api");
+        entity.setCreatedBy(nodeId);
+        entity.setUpdatedBy(nodeId);
         mapper.insert(entity);
         meter.incEnqueued();
         return entity.getTaskId();

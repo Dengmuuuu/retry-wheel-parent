@@ -1,4 +1,4 @@
-package com.fastretry.config;
+package com.fastretry.autoconfig;
 
 import com.fastretry.core.metric.RetryMeterRegistryProvider;
 import com.fastretry.core.metric.RetryMetrics;
