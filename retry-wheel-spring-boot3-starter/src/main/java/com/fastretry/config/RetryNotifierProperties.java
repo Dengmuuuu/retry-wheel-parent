@@ -5,6 +5,15 @@ import org.springframework.context.annotation.Configuration;
 
 import java.time.Duration;
 
+/**
+ *   notify:
+ *     enabled: true
+ *     async:
+ *       core-pool-size: 4
+ *       max-pool-size: 8
+ *       keep-alive: 60s
+ *       queue-capacity: 2000
+ */
 @ConfigurationProperties(prefix = "retry.notify")
 @Configuration
 public class RetryNotifierProperties {
