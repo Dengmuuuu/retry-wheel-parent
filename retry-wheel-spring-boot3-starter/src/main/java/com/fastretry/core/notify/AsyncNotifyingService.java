@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 
 /**
- * 通知的入口层
+ * 异步派发
  * 通过路由、限流、异步执行通知
  */
 public class AsyncNotifyingService {
