@@ -194,13 +194,15 @@ public final class NotifyContexts {
 
     private static Map<String, Object> baseAttrs(RetryTaskEntity t) {
         Map<String, Object> m = new HashMap<>();
-        if (t.getOwnerNodeId() != null) m.put("owner", t.getOwnerNodeId());
+        if (t.getOwnerNodeId() != null) {
+            m.put("owner", t.getOwnerNodeId());
+        }
         m.put("fence", t.getFenceToken());
         if (t.getNextTriggerTime() != null) {
-            m.put("nextTriggerTime", t.getNextTriggerTime().toInstant(ZoneOffset.UTC).atOffset(ZoneOffset.ofHours(8)).toString());
+            m.put("nextTriggerTime", t.getNextTriggerTime().toInstant(ZoneOffset.UTC));
         }
         if (t.getDeadlineTime() != null) {
-            m.put("deadlineTime", t.getDeadlineTime().toInstant(ZoneOffset.UTC).atOffset(ZoneOffset.ofHours(8)).toString());
+            m.put("deadlineTime", t.getDeadlineTime().toInstant(ZoneOffset.UTC));
         }
         m.put("id", t.getId());
         m.put("version", t.getVersion());
