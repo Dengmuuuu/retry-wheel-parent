@@ -27,6 +27,23 @@ public class NotifyContext {
     // 额外字段：shardKey、owner、fence、nextTriggerTime 等
     private Map<String, Object> attributes ;
 
+    public NotifyContext() {
+    }
+
+    public NotifyContext(NotifyEventType type, String nodeId, String bizType, String taskId, String tenantId, Integer retryCount, Integer maxRetry, String reasonCode, String lastError, Instant when, Map<String, Object> attributes) {
+        this.type = type;
+        this.nodeId = nodeId;
+        this.bizType = bizType;
+        this.taskId = taskId;
+        this.tenantId = tenantId;
+        this.retryCount = retryCount;
+        this.maxRetry = maxRetry;
+        this.reasonCode = reasonCode;
+        this.lastError = lastError;
+        this.when = when;
+        this.attributes = attributes;
+    }
+
     public NotifyEventType getType() {
         return type;
     }
