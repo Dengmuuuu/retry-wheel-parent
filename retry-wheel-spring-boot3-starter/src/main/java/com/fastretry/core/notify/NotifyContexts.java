@@ -31,7 +31,7 @@ public final class NotifyContexts {
     }
 
     public static NotifyContext ctxForTakeover(
-            String newOwnerNodeId, Long taskId, String bizType, String tenantId,
+            String newOwnerNodeId, String taskId, String bizType, String tenantId,
             String oldOwnerNodeId, long oldFence, long newFence) {
         return ctxForTakeover(newOwnerNodeId, taskId, bizType, tenantId, oldOwnerNodeId, oldFence, newFence, Clock.systemUTC().withZone(ZoneOffset.ofHours(8)));
     }
@@ -42,6 +42,10 @@ public final class NotifyContexts {
 
     public static NotifyContext ctxForPersistFail(String nodeId, RetryTaskEntity t, String op, Exception e) {
         return ctxForPersistFail(nodeId, t, op, e, Clock.systemUTC().withZone(ZoneOffset.ofHours(8)));
+    }
+
+    public static NotifyContext ctxForEngineError(String nodeId, String where, Throwable e) {
+        return ctxForEngineError(nodeId, where, e, Clock.systemUTC().withZone(ZoneOffset.ofHours(8)));
     }
 
     /* ========== 带 Clock 的重载（方便测试 / 注入DB时钟） ========== */
@@ -104,7 +108,7 @@ public final class NotifyContexts {
     }
 
     public static NotifyContext ctxForTakeover(
-            String newOwnerNodeId, Long taskId, String bizType, String tenantId,
+            String newOwnerNodeId, String taskId, String bizType, String tenantId,
             String oldOwnerNodeId, long oldFence, long newFence, Clock clock) {
 
         Map<String, Object> attrs = new HashMap<>();
@@ -161,6 +165,27 @@ public final class NotifyContexts {
                 "PERSIST_FAILED",
                 truncate(toError(e)),
                 now(clock),
+                attrs
+        );
+    }
+
+    public static NotifyContext ctxForEngineError(String nodeId, String where, Throwable e, Clock clock) {
+        Map<String, Object> attrs = new HashMap<>();
+        attrs.put("where", safe(where)); // 触发位置：dispatch-exec、wheel-timeout、scan-loop、executor-reject...
+        // 也可加上线程名、池状态等外部信息
+        attrs.put("thread", Thread.currentThread().getName());
+
+        return new NotifyContext(
+                NotifyEventType.ENGINE_ERROR,
+                nodeId,
+                /* bizType */ null,        // 引擎级异常无特定任务
+                /* taskId  */ null,
+                /* tenant  */ null,
+                /* retryCount */ null,
+                /* maxRetry   */ null,
+                /* reasonCode */ "ENGINE_ERROR",
+                truncate(toError(e)),
+                Instant.now(clock),
                 attrs
         );
     }
