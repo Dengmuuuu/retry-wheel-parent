@@ -1,5 +1,6 @@
-package com.fastretry.config;
+package com.fastretry.autoconfig;
 
+import com.fastretry.config.RetryWheelProperties;
 import com.fastretry.core.RetryEngine;
 import com.fastretry.core.failure.DefaultFailureDecider;
 import com.fastretry.core.metric.RetryMetrics;
@@ -10,12 +11,10 @@ import com.fastretry.core.spi.FailureDecider;
 import com.fastretry.core.spi.PayloadSerializer;
 import com.fastretry.core.spi.RetryTaskHandler;
 import com.fastretry.core.backoff.BackoffRegistry;
-import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.util.NamedThreadFactory;
 import io.netty.util.HashedWheelTimer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.ApplicationContext;

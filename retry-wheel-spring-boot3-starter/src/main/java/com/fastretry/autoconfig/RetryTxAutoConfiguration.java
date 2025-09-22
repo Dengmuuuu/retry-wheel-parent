@@ -1,5 +1,6 @@
-package com.fastretry.config;
+package com.fastretry.autoconfig;
 
+import com.fastretry.config.RetryWheelProperties;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
