@@ -62,7 +62,7 @@ public class RetryEngineLifecycle implements SmartLifecycle {
         }
         // 安排首次扫描
         long initialDelayMs = props.getScan().getInitialDelay().toMillis();
-        engine.scheduleScanner(initialDelayMs);
+        engine.scheduleScanner();
         log.info("[Retry-Engine] started: first scan in {} ms (nodeId={})", initialDelayMs, engine.getNodeId());
     }
 

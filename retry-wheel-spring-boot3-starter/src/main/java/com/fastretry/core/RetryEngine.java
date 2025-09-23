@@ -46,7 +46,7 @@ public class RetryEngine {
     private final HashedWheelTimer timer;
 
     /** 扫描线程池 */
-    private final ExecutorService scanExecutor;
+    private final ScheduledExecutorService scanExecutor;
 
     /** 任务调度线程池 */
     private final ExecutorService dispatchExecutor;
@@ -110,8 +110,8 @@ public class RetryEngine {
         this.tt = tt;
         this.notifyService = notifyService;
         this.props = props;
-        this.scanExecutor = Executors.newFixedThreadPool(props.getStick().isEnable() ? 2 : 1,
-                new NamedThreadFactory("retry-scan-exec"));
+        this.scanExecutor = Executors
+                .newSingleThreadScheduledExecutor(new NamedThreadFactory("retry-scan-scheduler"));
         this.nodeId = applicationContext.getEnvironment()
                 .getProperty("spring.application.name") + "-" + UUID.randomUUID();
         this.running.compareAndSet(false, props.getScan().isEnabled());
@@ -124,30 +124,30 @@ public class RetryEngine {
     /**
      * 扫表
      */
-    protected void scheduleScanner(long delayMs) {
+    protected void scheduleScanner() {
         Runnable scan = () -> {
             if (!running.get()) {
+                scanExecutor.shutdown();
                 log.warn("[ScheduleScanner] retry engine is stop, stop task scan");
                 return;
             }
             try {
-                scanExecutor.execute(this::lockMarkRunningBatch);
+                lockMarkRunningBatch();
                 if (props.getStick().isEnable()) {
-                    scanExecutor.execute(this::lockTakeOver);
+                    lockTakeOver();
                 }
+                log.info("[ScheduleScanner] start");
             } catch (Exception e) {
                 log.error("[ScheduleScanner]  scan task error", e);
                 notifyService.fire(NotifyContexts.ctxForEngineError(nodeId, "engine-core-scan", e), Severity.ERROR);
                 meter.incScanErr();
-            } finally {
-                // 将下轮scan挂到时间轮
-                scheduleScanner(props.getScan().getPeriod().toMillis());
             }
         };
-        // scan任务挂在delayMs后的时间轮上
-        timer.newTimeout(
-                new WheelTask(WheelTask.Kind.SCANNER_WAKEUP, null, false, scan),
-                delayMs, TimeUnit.MILLISECONDS);
+        // 单线程池定时执行
+        scanExecutor.scheduleAtFixedRate(scan,
+                props.getScan().getInitialDelay().toMillis(),
+                props.getScan().getPeriod().toMillis(),
+                TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -375,7 +375,7 @@ public class RetryEngine {
             return;
         }
 
-        log.info("[Task-Retry] taskId={}, attempt={}", task.getTaskId(), nextAttempt);
+//        log.info("[Task-Retry] taskId={}, attempt={}", task.getTaskId(), nextAttempt);
 
         Instant now = Instant.now(), deadline = task.getDeadlineTime() == null
                 ? null : task.getDeadlineTime().toInstant(ZoneOffset.ofHours(8));
