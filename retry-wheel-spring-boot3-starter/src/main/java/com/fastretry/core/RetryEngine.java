@@ -4,7 +4,6 @@ import com.baomidou.mybatisplus.core.toolkit.StringUtils;
 import com.fastretry.config.RetryWheelProperties;
 import com.fastretry.core.backoff.BackoffRegistry;
 import com.fastretry.core.metric.RetryMetrics;
-import com.fastretry.core.notify.AsyncNotifyingService;
 import com.fastretry.core.notify.NotifyContexts;
 import com.fastretry.core.notify.NotifyingFacade;
 import com.fastretry.core.spi.FailureDecider;
@@ -12,14 +11,16 @@ import com.fastretry.core.spi.PayloadSerializer;
 import com.fastretry.core.spi.RetryTaskHandler;
 import com.fastretry.mapper.RetryTaskMapper;
 import com.fastretry.model.SubmitOptions;
-import com.fastretry.model.ctx.NotifyContext;
+import com.fastretry.model.WheelTask;
 import com.fastretry.model.ctx.RetryTaskContext;
 import com.fastretry.model.entity.RetryTaskEntity;
 import com.fastretry.model.enums.Severity;
 import com.fastretry.model.enums.TaskState;
 import io.micrometer.core.instrument.util.NamedThreadFactory;
 import io.netty.util.HashedWheelTimer;
-import lombok.extern.slf4j.Slf4j;
+import io.netty.util.Timeout;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -28,17 +29,18 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-@Slf4j
-public class RetryEngine implements SmartLifecycle {
+/**
+ * 重试框架核心引擎
+ */
+public class RetryEngine {
+
+    Logger log = LoggerFactory.getLogger(RetryEngine.class);
 
     /** 时间轮 */
     private final HashedWheelTimer timer;
@@ -112,33 +114,17 @@ public class RetryEngine implements SmartLifecycle {
                 new NamedThreadFactory("retry-scan-exec"));
         this.nodeId = applicationContext.getEnvironment()
                 .getProperty("spring.application.name") + "-" + UUID.randomUUID();
+        this.running.compareAndSet(false, props.getScan().isEnabled());
     }
 
-    @Override
-    public void start() {
-        if (!running.compareAndSet(false, true)) {
-            return;
-        }
-        scheduleScanner(props.getScan().getInitialDelay().toMillis());
-    }
+    protected String getNodeId() { return nodeId;}
 
-    @Override
-    public void stop() {
-        running.set(false);
-        // 停止接受新任务, 等待在途完成
-        // TODO: shutdownAndAwait
-        timer.stop();
-    }
-
-    @Override
-    public boolean isRunning() {
-        return false;
-    }
+    protected HashedWheelTimer getTimer() { return timer;}
 
     /**
      * 扫表
      */
-    private void scheduleScanner(long delayMs) {
+    protected void scheduleScanner(long delayMs) {
         Runnable scan = () -> {
             if (!running.get()) {
                 log.warn("[ScheduleScanner] retry engine is stop, stop task scan");
@@ -365,7 +351,7 @@ public class RetryEngine implements SmartLifecycle {
         boolean retryable = failureDecider.isRetryable(ex, ctx);
         int nextAttempt = task.getRetryCount() + 1;
 
-        // 截断4000字符
+        // 截断 4000 字符
         String err = "null";
         if (!StringUtils.isBlank(ex.getMessage())) {
             err = ex.getMessage().substring(Math.min(4000, ex.getMessage().length()));
@@ -423,6 +409,7 @@ public class RetryEngine implements SmartLifecycle {
                 task.setLeaseExpireAt(LocalDateTime.ofInstant(
                         nextTs.plusSeconds(props.getStick().getRenewAhead().toSeconds()),
                         ZoneOffset.ofHours(8)));
+                task.setNextTriggerTime(LocalDateTime.ofInstant(nextTs, ZoneOffset.ofHours(8)));
                 log.info("[handleFailure] task={} renewLease success, lease expired={}", task.getId(), task.getLeaseExpireAt());
             }
             // 本地重试写回部分任务信息
@@ -441,7 +428,10 @@ public class RetryEngine implements SmartLifecycle {
                 task.setVersion(task.getVersion() + 1);
             }
             // 将重试任务粘滞到本地时间轮
-            timer.newTimeout(t -> dispatch(task), execDelay, TimeUnit.MILLISECONDS);
+            timer.newTimeout(
+                    new WheelTask(WheelTask.Kind.RETRY, task, true, () -> dispatch(task)),
+                    execDelay,
+                    TimeUnit.MILLISECONDS);
         }
     }
 
@@ -455,6 +445,9 @@ public class RetryEngine implements SmartLifecycle {
     }
 
     public String submit(String bizType, Object payload, SubmitOptions opt) {
+        if (!running.get()) {
+            throw new RuntimeException("retry engine is stop, stop task submit");
+        }
         RetryTaskEntity entity = new RetryTaskEntity();
         entity.setBizType(bizType);
         entity.setTaskId(Optional.ofNullable(opt.getDedupKey()).orElse(UUID.randomUUID().toString()));
@@ -478,5 +471,83 @@ public class RetryEngine implements SmartLifecycle {
         mapper.insert(entity);
         meter.incEnqueued();
         return entity.getTaskId();
+    }
+
+    protected void gracefulShutdown(long awaitSecond) {
+        // 停止接收新任务 and 扫描器
+        running.set(false);
+        scanExecutor.shutdownNow();
+        // 停止时间轮 & 将未触发的业务任务落库
+        int drained = drainWheelUnprocessed2Db();
+        // 关停执行线程池, 等待在途完成
+        handlerExecutor.shutdown();
+        dispatchExecutor.shutdown();
+
+        long awaitMs = Math.max(1, awaitSecond) * 1000L;
+        try {
+            if (!handlerExecutor.awaitTermination(awaitMs, TimeUnit.MILLISECONDS)) {
+                handlerExecutor.shutdownNow();
+                log.warn("[Retry-Engine] handlerExecutor forced shutdown after {}s", awaitSecond);
+            }
+            if (!dispatchExecutor.awaitTermination(Math.min(2000, awaitMs), TimeUnit.MILLISECONDS)) {
+                dispatchExecutor.shutdownNow();
+                log.warn("[Retry-Engine] dispatchExecutor forced shutdown");
+            }
+        } catch (InterruptedException ie) {
+            handlerExecutor.shutdownNow();
+            dispatchExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+        log.info("[Retry-Engine] graceful shutdown done, drainedWheelTasks={}", drained);
+    }
+
+    /**
+     * 停止时间轮, 拿到未触发任务, 落db
+     */
+    private int drainWheelUnprocessed2Db() {
+        Set<Timeout> unProcessed = timer.stop();
+        if (unProcessed == null || unProcessed.isEmpty()) {
+            log.info("[Retry-Engine] timer stopped with no unprocessed timeouts.");
+            return 0;
+        }
+        // 仅处理框架挂入的业务型 Wheel 任务，忽略其他任务
+        List<WheelTask> tasksToPersist = new ArrayList<>(unProcessed.size());
+        for (Timeout t : unProcessed) {
+            if (t == null || t.task() == null) {
+                continue;
+            }
+            if (t.task() instanceof WheelTask wt
+                    && wt.getKind() == WheelTask.Kind.RETRY) {
+                tasksToPersist.add(wt);
+            }
+        }
+        if (tasksToPersist.isEmpty()) {
+            log.info("[Retry-Engine] no business wheel tasks to persist.");
+            return 0;
+        }
+        int ok = 0;
+        // 按批量大小分批提交，防止 SQL 过长；没有批量方法时，逐条降级
+        final int batchSize = Math.max(100, props.getScan().getBatch());
+        for (int i = 0; i < tasksToPersist.size(); i += batchSize) {
+            List<WheelTask> slice = tasksToPersist.subList(i, Math.min(i + batchSize, tasksToPersist.size()));
+            try {
+                ok += tryReleaseBatch(slice);
+            } catch (Exception e) {
+                log.warn("[Retry-Engine] batch release failed, fallback single. size={}", slice.size(), e);
+                throw e;
+            }
+        }
+        log.info("[Retry-Engine] persisted {} wheel tasks back to DB as PENDING.", ok);
+        return ok;
+    }
+
+    /**
+     * 批量释放
+     */
+    private int tryReleaseBatch(List<WheelTask> slice) {
+        List<RetryTaskEntity> tasks = slice.stream()
+                .map(WheelTask::getTask)
+                .toList();
+        return mapper.releaseOnShutdownBatch(tasks);
     }
 }

@@ -194,4 +194,25 @@ public interface RetryTaskMapper extends BaseMapper<RetryTaskEntity> {
     int markDeadLetter(@Param("id") Long id,
                        @Param("version") int version,
                        @Param("lastError") String lastError);
+
+
+    /**批量释放 */
+    @Update({
+            "<script>",
+            "UPDATE retry_task rt",
+            "JOIN (",
+            "  <foreach collection='tasks' item='task' separator=' UNION ALL '>",
+            "    SELECT #{task.id} AS id, #{task.nextTriggerTime} AS next_trigger_time",
+            "  </foreach>",
+            ") t ON t.id = rt.id",
+            "SET rt.state = 0,",
+            "    rt.owner_node_id = NULL,",
+            "    rt.lease_expire_at = NULL,",
+            "    rt.updated_at = CURRENT_TIMESTAMP(3),",
+            "    rt.version = rt.version + 1,",
+            "    rt.next_trigger_time = t.next_trigger_time",
+            "WHERE rt.state IN (0,1)",
+            "</script>"
+    })
+    int releaseOnShutdownBatch(@Param("tasks") List<RetryTaskEntity> tasks);
 }
