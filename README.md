@@ -1,5 +1,5 @@
 # ResilientWheel
-一款基于 Netty HashedWheelTimer 的高可用分布式重试引擎，当前采用 MySQL 持久化 + 分布式抢占/粘滞租约，未来可无缝迁移至 Redis/MQ 等存储。
+一款基于 Netty HashedWheelTimer 的高可用分布式重试引擎，当前采用 MySQL 持久化 + 分布式抢占/粘滞租约，未来可无缝迁移至 Redis 等存储。
 
 ## 模块结构
 
