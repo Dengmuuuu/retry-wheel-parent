@@ -532,12 +532,7 @@ public class RetryEngine {
         final int batchSize = Math.max(100, props.getScan().getBatch());
         for (int i = 0; i < tasksToPersist.size(); i += batchSize) {
             List<WheelTask> slice = tasksToPersist.subList(i, Math.min(i + batchSize, tasksToPersist.size()));
-            try {
-                ok += tryReleaseBatch(slice);
-            } catch (Exception e) {
-                log.warn("[Retry-Engine] batch release failed, fallback single. size={}", slice.size(), e);
-                throw e;
-            }
+            ok += tryReleaseBatch(slice);
         }
         log.info("[Retry-Engine] persisted {} wheel tasks back to DB as PENDING.", ok);
         return ok;
@@ -550,6 +545,13 @@ public class RetryEngine {
         List<RetryTaskEntity> tasks = slice.stream()
                 .map(WheelTask::getTask)
                 .toList();
-        return mapper.releaseOnShutdownBatch(tasks);
+        try {
+            return mapper.releaseOnShutdownBatch(tasks);
+        } catch (Exception e) {
+            log.warn("[Retry-Engine] batch release failed, fallback single. size={}", slice.size(), e);
+            tasks.forEach(task ->
+                    notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task, "releaseOnShutdownBatch", e), Severity.ERROR));
+            throw e;
+        }
     }
 }
