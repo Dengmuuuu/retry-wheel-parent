@@ -145,7 +145,9 @@ public class RetryEngine {
             }
         };
         // scan任务挂在delayMs后的时间轮上
-        timer.newTimeout(t -> scan.run(), delayMs, TimeUnit.MILLISECONDS);
+        timer.newTimeout(
+                new WheelTask(WheelTask.Kind.SCANNER_WAKEUP, null, false, scan),
+                delayMs, TimeUnit.MILLISECONDS);
     }
 
     /**

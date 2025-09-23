@@ -34,9 +34,6 @@ public class WheelTask implements TimerTask {
 
     @Override
     public void run(Timeout timeout) throws Exception {
-        if (kind == Kind.SCANNER_WAKEUP) {
-            return;
-        }
         actual.run();
     }
 
