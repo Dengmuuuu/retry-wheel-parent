@@ -375,8 +375,6 @@ public class RetryEngine {
             return;
         }
 
-//        log.info("[Task-Retry] taskId={}, attempt={}", task.getTaskId(), nextAttempt);
-
         Instant now = Instant.now(), deadline = task.getDeadlineTime() == null
                 ? null : task.getDeadlineTime().toInstant(ZoneOffset.ofHours(8));
         Instant nextTs = backoff.resolve(task.getBackoffStrategy())
@@ -437,15 +435,6 @@ public class RetryEngine {
                         TimeUnit.MILLISECONDS);
             }
         }
-    }
-
-    /**
-     * 小工具：剥离 CompletionException/ExecutionException 外壳
-     */
-    private static Throwable unwrap(Throwable ex) {
-        if (ex instanceof CompletionException ce && ce.getCause() != null) return ce.getCause();
-        if (ex instanceof ExecutionException ee && ee.getCause() != null) return ee.getCause();
-        return ex;
     }
 
     public String submit(String bizType, Object payload, SubmitOptions opt) {
