@@ -411,7 +411,6 @@ public class RetryEngine {
                 task.setLeaseExpireAt(LocalDateTime.ofInstant(
                         nextTs.plusSeconds(props.getStick().getRenewAhead().toSeconds()),
                         ZoneOffset.ofHours(8)));
-                task.setNextTriggerTime(LocalDateTime.ofInstant(nextTs, ZoneOffset.ofHours(8)));
                 log.info("[handleFailure] task={} renewLease success, lease expired={}", task.getId(), task.getLeaseExpireAt());
             }
             // 本地重试写回部分任务信息
@@ -428,6 +427,7 @@ public class RetryEngine {
                 // 更新本地任务重试次数及版本
                 task.setRetryCount(nextAttempt);
                 task.setVersion(task.getVersion() + 1);
+                task.setNextTriggerTime(LocalDateTime.ofInstant(nextTs, ZoneOffset.ofHours(8)));
             }
             // 将重试任务粘滞到本地时间轮
             timer.newTimeout(
