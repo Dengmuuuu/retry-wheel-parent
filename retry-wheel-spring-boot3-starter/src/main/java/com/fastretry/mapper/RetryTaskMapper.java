@@ -57,7 +57,7 @@ public interface RetryTaskMapper extends BaseMapper<RetryTaskEntity> {
             "UPDATE retry_task",
             "   SET state = 1,",
             "       owner_node_id = #{nodeId},",
-            "       lease_expire_at = TIMESTAMPADD(MICROSECOND, #{ttlMs} * 1000, CURRENT_TIMESTAMP(3)),",
+            "       lease_expire_at = DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL #{ttls} SECOND),",
             "       fence_token = fence_token + 1,",
             "       updated_at = CURRENT_TIMESTAMP(3),",
             "       version = version + 1",
@@ -73,7 +73,7 @@ public interface RetryTaskMapper extends BaseMapper<RetryTaskEntity> {
             "   </if>",
             "</script>"
     })
-    int markRunningAndOwnBatch(@Param("ids") List<Long> ids, @Param("nodeId") String nodeId, @Param("ttlMs") long ttlMs);
+    int markRunningAndOwnBatch(@Param("ids") List<Long> ids, @Param("nodeId") String nodeId, @Param("ttls") long ttls);
 
     /**
      * 提前续约
