@@ -144,7 +144,7 @@ public class RetryEngine {
             }
         };
         // 单线程池定时执行
-        scanExecutor.scheduleAtFixedRate(scan,
+        scanExecutor.scheduleWithFixedDelay(scan,
                 props.getScan().getInitialDelay().toMillis(),
                 props.getScan().getPeriod().toMillis(),
                 TimeUnit.MILLISECONDS);
