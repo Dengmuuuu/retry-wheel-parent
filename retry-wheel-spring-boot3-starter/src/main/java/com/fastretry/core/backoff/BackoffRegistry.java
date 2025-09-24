@@ -11,7 +11,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 策略注册中心：
+ * 策略注册中心
  * - 内置 fixed / exponential
  * - 解析 "spi:{name}" 映射到外部注册的 BackoffPolicy（name() 返回的名字）
  * - 线程安全

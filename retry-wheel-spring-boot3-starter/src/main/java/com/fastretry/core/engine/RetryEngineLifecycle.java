@@ -1,4 +1,4 @@
-package com.fastretry.core;
+package com.fastretry.core.engine;
 
 import com.fastretry.config.RetryNotifierProperties;
 import com.fastretry.config.RetryWheelProperties;

@@ -1,15 +1,18 @@
-package com.fastretry.core;
+package com.fastretry.core.engine;
 
 import com.baomidou.mybatisplus.core.toolkit.StringUtils;
 import com.fastretry.config.RetryWheelProperties;
+import com.fastretry.core.EngineOps;
 import com.fastretry.core.backoff.BackoffRegistry;
+import com.fastretry.core.failure.FailureDeciderHandlerFactory;
 import com.fastretry.core.handler.GuardedHandlerExecutor;
 import com.fastretry.core.metric.RetryMetrics;
 import com.fastretry.core.notify.NotifyContexts;
 import com.fastretry.core.notify.NotifyingFacade;
-import com.fastretry.core.spi.FailureDecider;
+import com.fastretry.core.spi.failure.FailureDecider;
 import com.fastretry.core.spi.PayloadSerializer;
 import com.fastretry.core.spi.RetryTaskHandler;
+import com.fastretry.core.spi.failure.FailureDeciderHandler;
 import com.fastretry.mapper.RetryTaskMapper;
 import com.fastretry.model.SubmitOptions;
 import com.fastretry.model.WheelTask;
@@ -24,7 +27,6 @@ import io.netty.util.Timeout;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationContext;
-import org.springframework.context.SmartLifecycle;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -87,7 +89,14 @@ public class RetryEngine {
     /** 通知模块 */
     private final NotifyingFacade notifyService;
 
+    /** 将执行任务的handler进行包装增强 */
     private final GuardedHandlerExecutor guard;
+
+    /** 提供引擎能力给失败策略 不暴露实现细节 */
+    private final EngineOps engineOps;
+
+    /** 失败决策处理器工厂 */
+    private FailureDeciderHandlerFactory failureHandlerFactory;
 
     public RetryEngine(HashedWheelTimer timer,
                        ExecutorService dispatchExecutor,
@@ -102,6 +111,7 @@ public class RetryEngine {
                        ApplicationContext applicationContext,
                        NotifyingFacade notifyService,
                        GuardedHandlerExecutor guard,
+                       FailureDeciderHandlerFactory failureHandlerFactory,
                        RetryWheelProperties props) {
         this.timer = timer;
         this.dispatchExecutor = dispatchExecutor;
@@ -121,6 +131,18 @@ public class RetryEngine {
         this.nodeId = applicationContext.getEnvironment()
                 .getProperty("spring.application.name") + "-" + UUID.randomUUID();
         this.running.compareAndSet(false, props.getScan().isEnabled());
+        this.engineOps = new DefaultEngineOps(
+                nodeId,
+                props,
+                backoff,
+                mapper,
+                notifyService,
+                meter,
+                timer,
+                running::get,
+                this::dispatch // 直接把方法引用传进去
+        );
+        this.failureHandlerFactory = failureHandlerFactory;
     }
 
     protected String getNodeId() { return nodeId;}
@@ -243,7 +265,7 @@ public class RetryEngine {
     /**
      * 线程池调度执行任务
      */
-    private void dispatch(RetryTaskEntity task) {
+    protected void dispatch(RetryTaskEntity task) {
         dispatchExecutor.execute(() -> {
             try {
                 // check过期/截止线, 标记进入死信队列
@@ -320,7 +342,8 @@ public class RetryEngine {
                         // 外层等待超时, 手动记一次熔断失败
                         cb.onError(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS, te);
                     }
-                    handleFailure(task, new RuntimeException("[Dispatch] Handler execute time out"), context);
+                    context.setErr("Handler execute time out");
+                    handleFailure(task, te, context);
                     return;
                 } catch (Throwable e) {
                     handleFailure(task, e, context);
@@ -362,90 +385,33 @@ public class RetryEngine {
     private void handleFailure(RetryTaskEntity task, Throwable ex, RetryTaskContext ctx) {
         meter.incFailed();
 
-        boolean retryable = failureDecider.isRetryable(ex, ctx);
+        FailureDecider.Decision decision = failureDecider.decide(ex, ctx);
         int nextAttempt = task.getRetryCount() + 1;
 
         // 截断 4000 字符
         String err = "null";
         if (!StringUtils.isBlank(ex.getMessage())) {
             err = ex.getMessage().substring(Math.min(4000, ex.getMessage().length()));
+            ctx.setErr(err);
         }
-        // 不可重试或者达到最大重试次数, 将任务标记死信队列
-        if (!retryable || nextAttempt > task.getMaxRetry()) {
-            try {
-                mapper.markDeadLetter(task.getId(), task.getVersion(), err);
-            } catch (Exception e) {
-                notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task, "markDeadLetter", e), Severity.ERROR);
-                throw e;
-            }
-            meter.incDlq();
-            if (!retryable) {
-                notifyService.fire(NotifyContexts.ctxForNonRetryable(nodeId, task, ex), Severity.WARNING);
-            } else {
-                notifyService.fire(NotifyContexts.ctxForMaxRetry(nodeId, task, ex), Severity.WARNING);
-            }
-            return;
+        // 上限保护 RETRY 但超过 maxRetry → 强制改为 DLQ
+        if (decision.getOutcome() == FailureDecider.Outcome.RETRY
+                && nextAttempt > task.getMaxRetry()) {
+            decision = FailureDecider.Decision.of(FailureDecider.Outcome.DEAD_LETTER, decision.getCategory())
+                    .withMsg("MAX_RETRY");
         }
 
-        Instant now = Instant.now(), deadline = task.getDeadlineTime() == null
-                ? null : task.getDeadlineTime().toInstant(ZoneOffset.ofHours(8));
-        Instant nextTs = backoff.resolve(task.getBackoffStrategy())
-                .next(now, nextAttempt, deadline, task, props);
-        // 下次执行时间间隔
-        long execDelay = nextTs.toEpochMilli() - now.toEpochMilli();
-        // 到期时间间隔
-        long expiredDelay = Duration.between(LocalDateTime.now(), task.getLeaseExpireAt()).toMillis();
-
-        // 设置下次触发时间, 非粘滞模式
-        if (!props.getStick().isEnable()) {
-            try {
-                mapper.markPendingWithNext(
-                        task.getId(), task.getVersion(), LocalDateTime.ofInstant(nextTs, ZoneOffset.ofHours(8)), nextAttempt, err);
-            } catch (Exception e) {
-                notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task, "markPendingWithNext", e), Severity.ERROR);
-                throw e;
-            }
-        } else {
-            // 粘滞模式 RUNNING 内循环, 不回PENDING 不换owner
-            if (execDelay > expiredDelay) {
-                // 下次执行时间超过了当前租约到期时间, 续约到下次执行时间后
-                long ttl = Duration.ofMillis(execDelay).plus(props.getStick().getRenewAhead()).toSeconds();
-                try {
-                    // 为防止时钟漂移, 最终以数据库时钟为准
-                    mapper.renewLease(task.getId(), nodeId, ttl);
-                } catch (Exception e) {
-                    notifyService.fire(NotifyContexts.ctxForRenewFail(nodeId, task, e), Severity.WARNING);
-                    throw e;
-                }
-                // 本地推算一下到期时间, 毫秒级误差, 节省一次db查询
-                task.setLeaseExpireAt(LocalDateTime.ofInstant(
-                        nextTs.plusSeconds(props.getStick().getRenewAhead().toSeconds()),
-                        ZoneOffset.ofHours(8)));
-                log.info("[handleFailure] task={} renewLease success, lease expired={}", task.getId(), task.getLeaseExpireAt());
-            }
-            // 本地重试写回部分任务信息
-            int st = 0;
-            try {
-                st = mapper.updateForLocalRetry(task.getId(), nodeId, task.getVersion(),
-                        LocalDateTime.ofInstant(nextTs, ZoneOffset.ofHours(8)),
-                        nextAttempt, err);
-            } catch (Exception e) {
-                notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task, "updateForLocalRetry", e), Severity.ERROR);
-                throw e;
-            }
-            if (st > 0) {
-                // 更新本地任务重试次数及版本
-                task.setRetryCount(nextAttempt);
-                task.setVersion(task.getVersion() + 1);
-                task.setNextTriggerTime(LocalDateTime.ofInstant(nextTs, ZoneOffset.ofHours(8)));
-            }
-            if (running.get()) {
-                // 将重试任务粘滞到本地时间轮
-                timer.newTimeout(
-                        new WheelTask(WheelTask.Kind.RETRY, task, true, () -> dispatch(task)),
-                        execDelay,
-                        TimeUnit.MILLISECONDS);
-            }
+        FailureDeciderHandler h = failureHandlerFactory.get(decision);
+        if (h == null) {
+            // 没有对应决策处理器 -> 进入DLQ
+            h = failureHandlerFactory.get(FailureDecider.Outcome.DEAD_LETTER);
+        }
+        try {
+            h.handler(task, ctx, decision, engineOps);
+        } catch (Exception e) {
+            notifyService.fire(NotifyContexts.ctxForPersistFail(nodeId, task,
+                    "FailureDeciderHandler("+decision.getOutcome()+")", e), Severity.ERROR);
+            throw new RuntimeException(e);
         }
     }
 

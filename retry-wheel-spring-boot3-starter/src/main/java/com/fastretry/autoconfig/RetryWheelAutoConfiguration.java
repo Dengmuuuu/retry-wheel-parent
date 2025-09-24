@@ -3,18 +3,18 @@ package com.fastretry.autoconfig;
 import com.fastretry.annotation.EnableRetryWheel;
 import com.fastretry.config.RetryNotifierProperties;
 import com.fastretry.config.RetryWheelProperties;
-import com.fastretry.core.RetryEngine;
-import com.fastretry.core.RetryEngineLifecycle;
 import com.fastretry.core.backoff.BackoffRegistry;
-import com.fastretry.core.failure.DefaultFailureDecider;
+import com.fastretry.core.engine.RetryEngine;
+import com.fastretry.core.engine.RetryEngineLifecycle;
+import com.fastretry.core.failure.FailureDeciderHandlerFactory;
 import com.fastretry.core.handler.GuardedHandlerExecutor;
 import com.fastretry.core.metric.RetryMetrics;
 import com.fastretry.core.notify.NotifyingFacade;
 import com.fastretry.core.serializer.JacksonPayloadSerializer;
 import com.fastretry.core.spi.BackoffPolicy;
-import com.fastretry.core.spi.FailureDecider;
 import com.fastretry.core.spi.PayloadSerializer;
 import com.fastretry.core.spi.RetryTaskHandler;
+import com.fastretry.core.spi.failure.FailureDecider;
 import com.fastretry.mapper.RetryTaskMapper;
 import io.micrometer.core.instrument.util.NamedThreadFactory;
 import io.netty.util.HashedWheelTimer;
@@ -98,19 +98,20 @@ public class RetryWheelAutoConfiguration {
      * 重试引擎
      */
     @Bean
-    public RetryEngine retryEngine(@Autowired HashedWheelTimer timer,
+    public RetryEngine retryEngine(HashedWheelTimer timer,
                                    @Qualifier("taskDispatchExecutor") @Autowired ExecutorService dispatchExecutor,
                                    @Qualifier("taskHandlerExecutor") @Autowired ExecutorService handlerExecutor,
-                                   @Autowired(required = false) RetryTaskMapper mapper,
-                                   @Autowired(required = false) PayloadSerializer serializer,
+                                   RetryTaskMapper mapper,
+                                   PayloadSerializer serializer,
                                    @Autowired(required = false)  Map<String, RetryTaskHandler<?>> handlers,
-                                   @Autowired BackoffRegistry backoffRegistry,
-                                   @Autowired(required = false)  FailureDecider failureDecider,
+                                   BackoffRegistry backoffRegistry,
+                                   FailureDecider failureDecider,
                                    RetryMetrics meter,
                                    TransactionTemplate tt,
                                    RetryWheelProperties props,
                                    NotifyingFacade notifyService,
                                    GuardedHandlerExecutor guard,
+                                   FailureDeciderHandlerFactory failHandlerFactory,
                                    ApplicationContext applicationContext) {
         EnableRetryWheel enableRetryWheel = findEnableRetryWheel(applicationContext);
         if (enableRetryWheel != null) {
@@ -120,7 +121,7 @@ public class RetryWheelAutoConfiguration {
         }
 
         return new RetryEngine(timer, dispatchExecutor, handlerExecutor, mapper, serializer, handlers,
-                backoffRegistry, failureDecider, meter, tt, applicationContext, notifyService, guard, props);
+                backoffRegistry, failureDecider, meter, tt, applicationContext, notifyService, guard, failHandlerFactory, props);
     }
 
     /**
@@ -156,15 +157,6 @@ public class RetryWheelAutoConfiguration {
     @ConditionalOnMissingBean(PayloadSerializer.class)
     public PayloadSerializer payloadSerializer() {
         return new JacksonPayloadSerializer();
-    }
-
-    /**
-     * 默认失败异常判断
-     */
-    @Bean
-    @ConditionalOnMissingBean(FailureDecider.class)
-    public FailureDecider failureDecider() {
-        return new DefaultFailureDecider();
     }
 
 
