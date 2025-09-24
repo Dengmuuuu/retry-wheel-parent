@@ -18,7 +18,7 @@ public class OpenCircuitHandler implements FailureCaseHandler<DownstreamOpenCirc
     public FailureDecider.Decision execute(DownstreamOpenCircuitException ex, RetryTaskContext ctx) {
         return FailureDecider.Decision
                 .of(FailureDecider.Outcome.RETRY, FailureDecider.Category.OPEN_CIRCUIT)
-                .factor(4.0)
+                .factor(8.0)
                 .withCode("CB_OPEN");
     }
 }

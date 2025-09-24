@@ -16,7 +16,7 @@ public class BulkheadFullHandler implements FailureCaseHandler<DownstreamBulkhea
     @Override
     public FailureDecider.Decision execute(DownstreamBulkheadFullException ex, RetryTaskContext ctx) {
         return FailureDecider.Decision.of(FailureDecider.Outcome.RETRY, FailureDecider.Category.BULKHEAD_FULL)
-                .factor(2.5)
+                .factor(4.0)
                 .withCode("BULKHEAD_FULL");
     }
 }

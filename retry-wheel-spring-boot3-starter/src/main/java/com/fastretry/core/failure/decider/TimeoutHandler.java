@@ -18,6 +18,6 @@ public class TimeoutHandler implements FailureCaseHandler<TimeoutException> {
     @Override
     public FailureDecider.Decision execute(TimeoutException ex, RetryTaskContext ctx) {
         return FailureDecider.Decision.of(FailureDecider.Outcome.RETRY, FailureDecider.Category.TIMEOUT)
-                .factor(1.5).withCode("TIMEOUT");
+                .factor(4.0).withCode("TIMEOUT");
     }
 }
