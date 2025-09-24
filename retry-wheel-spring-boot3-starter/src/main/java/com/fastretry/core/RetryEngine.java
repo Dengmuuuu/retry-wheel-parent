@@ -3,6 +3,7 @@ package com.fastretry.core;
 import com.baomidou.mybatisplus.core.toolkit.StringUtils;
 import com.fastretry.config.RetryWheelProperties;
 import com.fastretry.core.backoff.BackoffRegistry;
+import com.fastretry.core.handler.GuardedHandlerExecutor;
 import com.fastretry.core.metric.RetryMetrics;
 import com.fastretry.core.notify.NotifyContexts;
 import com.fastretry.core.notify.NotifyingFacade;
@@ -16,6 +17,7 @@ import com.fastretry.model.ctx.RetryTaskContext;
 import com.fastretry.model.entity.RetryTaskEntity;
 import com.fastretry.model.enums.Severity;
 import com.fastretry.model.enums.TaskState;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.micrometer.core.instrument.util.NamedThreadFactory;
 import io.netty.util.HashedWheelTimer;
 import io.netty.util.Timeout;
@@ -85,6 +87,8 @@ public class RetryEngine {
     /** 通知模块 */
     private final NotifyingFacade notifyService;
 
+    private final GuardedHandlerExecutor guard;
+
     public RetryEngine(HashedWheelTimer timer,
                        ExecutorService dispatchExecutor,
                        ExecutorService handlerExecutor,
@@ -97,6 +101,7 @@ public class RetryEngine {
                        TransactionTemplate tt,
                        ApplicationContext applicationContext,
                        NotifyingFacade notifyService,
+                       GuardedHandlerExecutor guard,
                        RetryWheelProperties props) {
         this.timer = timer;
         this.dispatchExecutor = dispatchExecutor;
@@ -109,6 +114,7 @@ public class RetryEngine {
         this.meter = meter;
         this.tt = tt;
         this.notifyService = notifyService;
+        this.guard = guard;
         this.props = props;
         this.scanExecutor = Executors
                 .newSingleThreadScheduledExecutor(new NamedThreadFactory("retry-scan-scheduler"));
@@ -302,12 +308,18 @@ public class RetryEngine {
                 }
 
                 // 执行 with 超时
+                long startNanos = System.nanoTime();
                 Future<Boolean> f = handlerExecutor.submit(() -> executeWith(h, task, context));
                 boolean ret = false;
                 try {
                     ret = f.get(task.getExecuteTimeoutMs(), TimeUnit.MILLISECONDS);
                 } catch (TimeoutException te) {
                     f.cancel(true);
+                    CircuitBreaker cb = guard.getCircuitBreakerIfEnabled(task.getBizType());
+                    if (cb != null) {
+                        // 外层等待超时, 手动记一次熔断失败
+                        cb.onError(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS, te);
+                    }
                     handleFailure(task, new RuntimeException("[Dispatch] Handler execute time out"), context);
                     return;
                 } catch (Throwable e) {
@@ -341,7 +353,7 @@ public class RetryEngine {
         // 反序列化为T, 类型安全
         T payload = serializer.deserialize(task.getPayload(), handler.payloadType());
         // 调用handler
-        return handler.execute(ctx, payload);
+        return guard.execute(ctx.getBizType(), ctx, payload, handler);
     }
 
     /**
