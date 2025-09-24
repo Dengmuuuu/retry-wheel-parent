@@ -101,14 +101,16 @@
             <artifactId>resilience4j-circuitbreaker</artifactId>
             <version>2.3.0</version>
         </dependency>
+
+        <!-- https://mvnrepository.com/artifact/io.github.resilience4j/resilience4j-bulkhead -->
+        <dependency>
+            <groupId>io.github.resilience4j</groupId>
+            <artifactId>resilience4j-bulkhead</artifactId>
+            <version>2.3.0</version>
+        </dependency>
     </dependencies>
 
-    <!-- https://mvnrepository.com/artifact/io.github.resilience4j/resilience4j-bulkhead -->
-    <dependency>
-        <groupId>io.github.resilience4j</groupId>
-        <artifactId>resilience4j-bulkhead</artifactId>
-        <version>2.3.0</version>
-    </dependency>
+
 
 
 
