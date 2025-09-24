@@ -3,6 +3,7 @@ package com.fastretry.autoconfig;
 import com.fastretry.core.failure.FailureDeciderHandlerFactory;
 import com.fastretry.core.failure.RouterFailureDecider;
 import com.fastretry.core.failure.decider.*;
+import com.fastretry.core.failure.handler.DeadLetterDeciderHandler;
 import com.fastretry.core.failure.handler.RetryDeciderHandler;
 import com.fastretry.core.spi.failure.FailureCaseHandler;
 import com.fastretry.core.spi.failure.FailureDecider;
@@ -48,6 +49,10 @@ public class FailureDeciderAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean(RetryDeciderHandler.class)
     public RetryDeciderHandler retryDeciderHandler() { return new RetryDeciderHandler(); }
+
+    @Bean
+    @ConditionalOnMissingBean(DeadLetterDeciderHandler.class)
+    public DeadLetterDeciderHandler deadLetterDeciderHandler() { return new DeadLetterDeciderHandler(); }
 
     // FailureDeciderHandlerFactory 注入所有 FailureDeciderHandler
     @Bean
