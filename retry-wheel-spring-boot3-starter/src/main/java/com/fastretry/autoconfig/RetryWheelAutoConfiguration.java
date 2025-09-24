@@ -7,6 +7,7 @@ import com.fastretry.core.RetryEngine;
 import com.fastretry.core.RetryEngineLifecycle;
 import com.fastretry.core.backoff.BackoffRegistry;
 import com.fastretry.core.failure.DefaultFailureDecider;
+import com.fastretry.core.handler.GuardedHandlerExecutor;
 import com.fastretry.core.metric.RetryMetrics;
 import com.fastretry.core.notify.NotifyingFacade;
 import com.fastretry.core.serializer.JacksonPayloadSerializer;
@@ -109,6 +110,7 @@ public class RetryWheelAutoConfiguration {
                                    TransactionTemplate tt,
                                    RetryWheelProperties props,
                                    NotifyingFacade notifyService,
+                                   GuardedHandlerExecutor guard,
                                    ApplicationContext applicationContext) {
         EnableRetryWheel enableRetryWheel = findEnableRetryWheel(applicationContext);
         if (enableRetryWheel != null) {
@@ -118,7 +120,7 @@ public class RetryWheelAutoConfiguration {
         }
 
         return new RetryEngine(timer, dispatchExecutor, handlerExecutor, mapper, serializer, handlers,
-                backoffRegistry, failureDecider, meter, tt, applicationContext, notifyService, props);
+                backoffRegistry, failureDecider, meter, tt, applicationContext, notifyService, guard, props);
     }
 
     /**
