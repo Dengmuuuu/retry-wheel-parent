@@ -22,6 +22,10 @@ import java.util.Map;
 import java.util.concurrent.*;
 import java.util.function.Supplier;
 
+/**
+ * 对任务handler进装饰增强
+ * 限流 / 并发限制 / 熔断
+ */
 public class GuardedHandlerExecutor {
 
     private final RetryGuardProperties props;
