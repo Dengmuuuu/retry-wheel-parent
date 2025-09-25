@@ -57,7 +57,7 @@ public interface RetryTaskMapper extends BaseMapper<RetryTaskEntity> {
             "UPDATE retry_task",
             "   SET state = 1,",
             "       owner_node_id = #{nodeId},",
-            "       lease_expire_at = TIMESTAMPADD(MICROSECOND, #{ttlMs} * 1000, CURRENT_TIMESTAMP(3)),",
+            "       lease_expire_at = DATE_ADD(CURRENT_TIMESTAMP(3), INTERVAL #{ttls} SECOND),",
             "       fence_token = fence_token + 1,",
             "       updated_at = CURRENT_TIMESTAMP(3),",
             "       version = version + 1",
@@ -73,7 +73,7 @@ public interface RetryTaskMapper extends BaseMapper<RetryTaskEntity> {
             "   </if>",
             "</script>"
     })
-    int markRunningAndOwnBatch(@Param("ids") List<Long> ids, @Param("nodeId") String nodeId, @Param("ttlMs") long ttlMs);
+    int markRunningAndOwnBatch(@Param("ids") List<Long> ids, @Param("nodeId") String nodeId, @Param("ttls") long ttls);
 
     /**
      * 提前续约
@@ -194,4 +194,25 @@ public interface RetryTaskMapper extends BaseMapper<RetryTaskEntity> {
     int markDeadLetter(@Param("id") Long id,
                        @Param("version") int version,
                        @Param("lastError") String lastError);
+
+
+    /**批量释放 */
+    @Update({
+            "<script>",
+            "UPDATE retry_task rt",
+            "JOIN (",
+            "  <foreach collection='tasks' item='task' separator=' UNION ALL '>",
+            "    SELECT #{task.id} AS id, #{task.nextTriggerTime} AS next_trigger_time",
+            "  </foreach>",
+            ") t ON t.id = rt.id",
+            "SET rt.state = 0,",
+            "    rt.owner_node_id = NULL,",
+            "    rt.lease_expire_at = NULL,",
+            "    rt.updated_at = CURRENT_TIMESTAMP(3),",
+            "    rt.version = rt.version + 1,",
+            "    rt.next_trigger_time = t.next_trigger_time",
+            "WHERE rt.state IN (0,1)",
+            "</script>"
+    })
+    int releaseOnShutdownBatch(@Param("tasks") List<RetryTaskEntity> tasks);
 }

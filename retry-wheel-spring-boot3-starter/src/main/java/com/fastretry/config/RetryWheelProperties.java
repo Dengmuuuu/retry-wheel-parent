@@ -21,6 +21,7 @@ import java.util.concurrent.ThreadPoolExecutor;
  *     ticks-per-wheel: 512
  *     max-pending-timeouts: 100000
  *   scan:
+ *     enabled: true
  *     stickMode: false
  *     initial-delay: 200
  *     period: 200
@@ -196,6 +197,9 @@ public class RetryWheelProperties {
     }
 
     public static class Scan {
+        /** 是否启动扫描 */
+        private boolean enabled = false;
+
         /** 首次扫描延迟 */
         private Duration initialDelay = Duration.ofMillis(200);
 
@@ -211,6 +215,8 @@ public class RetryWheelProperties {
         public void setPeriod(Duration period) { this.period = period; }
         public int getBatch() { return batch; }
         public void setBatch(int batch) { this.batch = batch; }
+        public boolean isEnabled() { return enabled;}
+        public void setEnabled(boolean enabled) { this.enabled = enabled;}
     }
 
     public static class Exec {
