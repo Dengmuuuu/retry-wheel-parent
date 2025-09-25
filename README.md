@@ -108,54 +108,6 @@ String taskId = engine.submit("test-biz", payload, opt);
 return Map.of("taskId", taskId);
 ```
 
----
-
-## 已实现/待完善/未实现
-
-> ✅ 已实现或具备完整骨架；🟨 已实现核心功能但待完善；⬜️ 待实现.
-
-### Starter 与自动装配
-✅ Spring Boot 3.x Starter 形态，自动装配引擎、扫描器、定时轮、默认 SPI(支持覆盖).  
-✅ RetryWheelProperties 配置映射（轮盘、扫描、执行器、回退、粘滞租约等）.  
-
-### 调度与执行
-
-✅ Netty HashedWheelTimer 初始化，tick 与槽数可配.  
-✅ 扫描器：DB 拉取到期任务 → 抢占（或接管）→ 投递本地执行.  
-✅ 执行器：业务线程池可配；采用CompletableFuture 链路 + Timeout机制，异步链路不吞异常.  
-✅ 失败回退：固定/指数退避（含 jitter） + BackoffRegistry SPI（自定义）.  
-⬜️ 优雅停机：释放本机持有任务 RUNNING→PENDING（next=now()）或允许自然到期接管.  
-
-### 泛型与序列化/失败判定
-
-✅ 提供默认PayloadSerializer（Jackson）实现, 可自定实现覆盖.  
-✅ FailureDecider（默认需要重试）：业务基于异常类型与业务返回值判断是否需要重试.  
-
-### 粘滞租约
-
-✅ 表结构新增：owner_node_id、lease_expire_at、fence_token；索引 idx_retry_task_lease.    
-✅ 首次抢占：PENDING→RUNNING 同步设置 owner/lease/fence 并挂入本地时间轮.    
-✅ 本地重试：保持 RUNNING 与 owner 不变，仅回写 retry_count/next_trigger_time/last_error.   
-✅ 接管：lease_expire_at<=now() 条件抢占，其他节点安全接手.   
-
-### 可观测性与运维
-
-🟨 Micrometer 指标：入队、成功、失败、DLQ、重试次数分布、执行时长等；空 MeterRegistry 使用默认/Noop 指标实现保障无侵入.  
-⬜️ Actuator 端点：到期积压、线程池使用、各状态计数等.  
-⬜️ 管理 REST：查询、暂停/恢复、取消、手动重试、DLQ 拉回（如已暴露基础接口）.  
-⬜️ 审计日志：关键状态变更/接管/续约/异常栈保留与截断.  
-
-### 告警通知
-
-✅ 告警通知器 SPI：DLQ、接管失败、续约失败突增等触发器.  
-
-### 多租户/分片
-
-⬜️ 多租户/分片策略 SPI：tenant_id/shard_key 参与扫描与限流；提供路由器扩展点.  
-
-
-
-
 
 
 # 通知模块重构
