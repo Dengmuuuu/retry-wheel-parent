@@ -339,7 +339,7 @@ class MyRouter implements NotifierRouter {
 
 ---
 
-## 1️⃣ 优雅停机机制
+## 优雅停机机制
 
 ### 改造背景
 原始版本直接调用 `timer.stop()` 停止时间轮，无法保证**未触发的任务**和**在途任务**安全落库，容易造成任务丢失。
@@ -360,22 +360,22 @@ class MyRouter implements NotifierRouter {
 
 ---
 
-## 3️⃣ Failure 模块重构
+## Failure 模块重构
 
 ### 改造目标
 从**单一 boolean 判定**进化为**“异常 → 决策 → 策略执行”**的可扩展架构。
 
 ### 核心设计
-#### 3.1 Decision 模型
+#### Decision 模型
 - `Outcome`：`RETRY | DEAD_LETTER | FAILED | PAUSED | CANCELLED`
 - `Category`：`OPEN_CIRCUIT | RATE_LIMITED | BULKHEAD_FULL | TIMEOUT | IO | BIZ_4XX | BIZ_RETRYABLE | UNKNOWN`
 - `preferSticky`、`backoffFactor`、`code/message`
 
-#### 3.2 异常路由
+#### 异常路由
 - **FailureCaseHandler**：一类异常对应一个实现类，产出 `Decision`
 - **RouterFailureDecider**：按异常类型匹配最合适的处理器，未匹配 → `DEAD_LETTER`
 
-#### 3.3 决策执行
+#### 决策执行
 - **FailureDeciderHandler**：按 `Outcome` 执行 DB 落库/时间轮重试/通知/指标
 - **EngineOps**：封装 timer、dispatch、mapper、backoff、notifier、metrics 等能力，策略层完全解耦引擎内部实现。
 
@@ -418,7 +418,7 @@ class MyRouter implements NotifierRouter {
 
 整体方案：**动态批量调节 + 精细化熔断 + 粘滞任务延后**，形成一个“自适应限流 + 快速失败”的综合治理能力。
 
-### 1️⃣ 扫表批量的动态调节
+### 扫表批量的动态调节
 
 #### 现状
 当前扫表批量 (`props.scan.batch`) 为静态配置，无法根据 DB 压力和下游处理情况自动调整。
@@ -436,7 +436,7 @@ class MyRouter implements NotifierRouter {
 
 ---
 
-### 2️⃣ Handler 级快速失败熔断
+### Handler 级快速失败熔断
 
 #### 目标
 * **仅针对出问题的业务 Handler** 触发熔断，**其他 Handler 不受影响**。
@@ -456,7 +456,7 @@ class MyRouter implements NotifierRouter {
 
 ---
 
-### 3️⃣ 超时重试任务的延后挂载
+### 超时重试任务的延后挂载
 
 当熔断触发后：
 * 这类任务**不立即再次调度**，而是按**更长退避因子**（例如 ×4）计算下一次执行时间。
@@ -467,7 +467,7 @@ class MyRouter implements NotifierRouter {
 
 ---
 
-### 4️⃣ 整体流程示意
+### 整体流程示意
 
             ┌─────────────┐
             │ 扫表器       │
@@ -490,7 +490,7 @@ class MyRouter implements NotifierRouter {
 
 ---
 
-### 5️⃣ 指标与运维
+### 指标与运维
 
 * 新增指标：
   * `scanner.batch.current`：实时扫描批量
@@ -502,7 +502,7 @@ class MyRouter implements NotifierRouter {
 
 ---
 
-### 6️⃣ 预期改造收益
+### 预期改造收益
 
 | 维度 | 优化前 | 优化后 |
 |------|------|------|
