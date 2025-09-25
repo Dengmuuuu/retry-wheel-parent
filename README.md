@@ -90,7 +90,7 @@ public class CallHandler implements RetryTaskHandler<PayloadModel> {
     }
 }
 ```
-### 5) 代码中投递任务
+### 5) 投递任务
 ```JAVA
 SubmitOptions opt = SubmitOptions.builder()
   .maxRetry(8)
@@ -158,7 +158,7 @@ return Map.of("taskId", taskId);
 
 
 
-# retry-notify (通知模块)
+# 通知模块重构
 
 > 为重试框架提供 **可插拔、可路由、可限流、可观测** 的通知能力。支持单条通知，覆盖 DLQ、最大重试、不可重试失败、接管、续约失败、引擎异常、持久化异常等事件。
 
@@ -168,7 +168,7 @@ return Map.of("taskId", taskId);
 
 - **SPI 可插拔**：`Notifier` 接口，内置 `LoggingNotifier`，支持自定义（如 飞书/钉钉/Slack）。
 - **异步派发**：`AsyncNotifyingService` 独立线程池 + 指数退避重试，不阻塞主流程。
-- **路由/过滤**：按事件/租户/业务/严重级别路由到不同通道；内置限流过滤器。
+- **路由/过滤**：按事件/租户/业务/严重级别路由到不同通道；
 - **可观测性**：Micrometer 指标 + 结构化日志。
 - **开关友好**：通过`NotifyingFacade`封装`AsyncNotifyingService`, `retry.notify.enabled=false`时不装配异步实现, 由门面内部自动降级为NOOP，调用方零判空，无NPE风险。
 
@@ -374,11 +374,6 @@ class MyRouter implements NotifierRouter {
   }
 }
 ```
-
-## 总结FAQ
-1) Q: 关闭通知会 NPE 吗？
-A: 不会。通过 NotifyingFacade 兜底，所有调用都会被安全吞掉。
-...待补充
 
 
 
