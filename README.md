@@ -118,7 +118,7 @@ return Map.of("taskId", taskId);
 
 ## 特性
 
-- **SPI 可插拔**：`Notifier` 接口，内置 `LoggingNotifier`，支持自定义（如 飞书/钉钉/Slack）。
+- **SPI 可插拔**：`Notifier` 接口，内置 `LoggingNotifier`，支持自定义（如 飞书/钉钉/kim）。
 - **异步派发**：`AsyncNotifyingService` 独立线程池 + 指数退避重试，不阻塞主流程。
 - **路由/过滤**：按事件/租户/业务/严重级别路由到不同通道；
 - **可观测性**：Micrometer 指标 + 结构化日志。
