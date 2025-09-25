@@ -250,11 +250,13 @@ public class NotifyingFacade {
 当`retry.notify.enabled=false`时，AsyncNotifyingService.fire不会执行，引擎无需判空。
 
 ### Notifier（SPI）
+```JAVA
 public interface Notifier {
   String name();                                          
   default boolean supports(NotifyContext ctx) { return true; }
   void notify(NotifyContext ctx, Severity severity) throws Exception;
 }
+```
 内置实现：`LoggingNotifier`（默认）：结构化日志
 
 ### 路由与过滤
