@@ -337,7 +337,7 @@ class MyRouter implements NotifierRouter {
 本文档总结了近期对 **ResilientWheel**重试引擎的两大核心改造：
 
 1. **优雅停机机制（Graceful Shutdown）**  
-3. **Failure（失败处理）模块重构**
+2. **Failure（失败处理）模块重构**
 
 ---
 
